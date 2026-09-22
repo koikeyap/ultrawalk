@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ルート下見ウォーカー</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* ===== Tokens ===== */
+:root{
+  --bg:#E6ECE7; --panel:#F6F8F5; --ink:#17251F; --muted:#5A6B63; --line:#C4D0C8;
+  --route:#E4572E; --done:#2F6B52; --elev:#B7CDBF; --nosv:#8C9A93;
+  --num:"Barlow Semi Condensed","Zen Kaku Gothic New",system-ui,sans-serif;
+  --txt:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#16211C; --panel:#1E2B25; --ink:#E4ECE7; --muted:#9DB0A6; --line:#34463D;
+    --route:#F06B45; --done:#6FC19A; --elev:#35503F; --nosv:#6F7E77;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#16211C; --panel:#1E2B25; --ink:#E4ECE7; --muted:#9DB0A6; --line:#34463D;
+  --route:#F06B45; --done:#6FC19A; --elev:#35503F; --nosv:#6F7E77;
+}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg); color:var(--ink); font-family:var(--txt); font-size:15px; line-height:1.5;
+  display:grid; grid-template-rows:auto 1fr auto; overflow:hidden;
+}
+button,select,input{font:inherit;color:inherit}
+button{
+  background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:6px 12px; cursor:pointer;
+}
+button:hover{border-color:var(--muted)}
+button.primary{background:var(--done); color:#fff; border-color:var(--done); min-width:6.5em; font-weight:700}
+:focus-visible{outline:2px solid var(--route); outline-offset:2px}
+select{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:5px 6px}
+
+/* ===== Header ===== */
+.bar{display:flex; align-items:baseline; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line)}
+.bar h1{font-size:17px; margin:0; font-weight:700; letter-spacing:.02em}
+.bar #fileName{color:var(--muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1}
+
+/* ===== Stage ===== */
+.stage{display:grid; grid-template-columns:3fr 2fr; min-height:0}
+.sv{position:relative; min-height:0; background:#2b3531}
+#pano{position:absolute; inset:0}
+.sv-msg{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center;
+  padding:24px; color:#E9EFEB; background:rgba(22,33,28,.72); font-size:14px; z-index:2;
+}
+.sv-msg.err{background:rgba(120,30,20,.8)}
+.sv-msg[hidden]{display:none}
+.map{min-height:0; border-left:1px solid var(--line)}
+.leaflet-container{background:var(--bg); font-family:var(--txt)}
+
+/* position marker */
+.me{width:26px;height:26px;display:grid;place-items:center}
+.me i{
+  display:block; width:0; height:0; border-left:8px solid transparent; border-right:8px solid transparent;
+  border-bottom:20px solid var(--route); filter:drop-shadow(0 0 2px #fff) drop-shadow(0 0 1px #fff);
+}
+
+/* ===== Dock ===== */
+.dock{border-top:1px solid var(--line); background:var(--panel); padding:8px 16px 10px}
+.readout{display:flex; flex-wrap:wrap; gap:4px 22px; align-items:baseline; font-family:var(--num)}
+.readout b{font-size:24px; font-weight:600; font-variant-numeric:tabular-nums}
+.readout small{color:var(--muted); font-size:13px; font-family:var(--txt)}
+.readout .updown{color:var(--muted); font-size:14px}
+#profile{display:block; width:100%; height:96px; margin:4px 0 6px; cursor:ew-resize; touch-action:none}
+.controls{display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; font-size:13px}
+.controls label{display:flex; gap:6px; align-items:center; color:var(--muted)}
+.req{margin-left:auto; color:var(--muted); font-family:var(--num); font-size:13px}
+
+/* ===== Setup dialog ===== */
+dialog{
+  border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink);
+  width:min(520px, calc(100vw - 32px)); padding:22px 24px;
+}
+dialog::backdrop{background:rgba(10,18,14,.5)}
+dialog h2{font-size:18px; margin:0 0 4px}
+dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
+.field{margin:0 0 16px}
+.field > span{display:block; font-weight:700; font-size:14px; margin-bottom:6px}
+.field input[type=password],.field input[type=text]{
+  width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg);
+}
+.drop{
+  border:2px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted);
+  cursor:pointer; font-size:14px;
+}
+.drop.over{border-color:var(--route); color:var(--ink)}
+.drop strong{color:var(--ink)}
+.row{display:flex; gap:10px; justify-content:flex-end; align-items:center; margin-top:8px}
+.err-line{color:var(--route); font-size:13px; min-height:1.4em; margin:0 0 6px}
+.check{display:flex; gap:6px; align-items:center; font-size:13px; color:var(--muted); margin-top:6px}
+
+/* ===== Narrow screens ===== */
+@media (max-width:760px){
+  .stage{grid-template-columns:1fr; grid-template-rows:1.3fr 1fr}
+  .map{border-left:0; border-top:1px solid var(--line)}
+  .readout b{font-size:20px}
+  #profile{height:72px}
+  .req{margin-left:0; width:100%}
+}
+@media (prefers-reduced-motion:reduce){ *{scroll-behavior:auto!important} }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <h1>ルート下見ウォーカー</h1>
+  <span id="fileName">GPXが未読み込みです</span>
+  <button id="btnSetup" type="button">GPX・APIキー</button>
+</header>
+
+<main class="stage">
+  <section class="sv" aria-label="ストリートビュー">
+    <div id="pano"></div>
+    <div id="svMsg" class="sv-msg">APIキーを設定すると、ここにストリートビューが表示されます</div>
+  </section>
+  <section id="map" class="map" aria-label="地図"></section>
+</main>
+
+<section class="dock">
+  <div class="readout" aria-live="polite">
+    <div><b id="rDist">0.00</b><small> / <span id="rTotal">0.00</span> km</small></div>
+    <div><b id="rEle">—</b><small> m</small></div>
+    <div><b id="rGrade">—</b><small> % 勾配</small></div>
+    <div class="updown">累積 ↑<span id="rUp">0</span> m ↓<span id="rDown">0</span> m（推定）</div>
+  </div>
+  <canvas id="profile" aria-label="標高グラフ。ドラッグで位置を移動"></canvas>
+  <div class="controls">
+    <button id="bPrev" type="button" aria-label="1歩戻る">◀</button>
+    <button id="bPlay" type="button" class="primary">再生</button>
+    <button id="bNext" type="button" aria-label="1歩進む">▶</button>
+    <label>表示間隔
+      <select id="sSpeed">
+        <option value="600">0.6秒</option>
+        <option value="1200" selected>1.2秒</option>
+        <option value="2000">2秒</option>
+        <option value="3500">3.5秒</option>
+      </select>
+    </label>
+    <label>歩幅
+      <select id="sStep">
+        <option value="10">10 m</option>
+        <option value="20" selected>20 m</option>
+        <option value="30">30 m</option>
+        <option value="50">50 m</option>
+        <option value="100">100 m</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="cFollow" checked> 地図を追従</label>
+    <span id="rReq" class="req"></span>
+  </div>
+</section>
+
+<dialog id="setup">
+  <h2>ルートを読み込む</h2>
+  <p>GPXだけでも地図と標高グラフは使えます。ストリートビューを表示するには Google Maps JavaScript API のキーが必要です。</p>
+
+  <div class="field">
+    <span>GPXファイル</span>
+    <div id="drop" class="drop" tabindex="0" role="button">
+      <strong>クリックして選択</strong>、またはここにドロップ
+      <div id="dropName" style="margin-top:6px"></div>
+    </div>
+    <input id="fileIn" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden>
+  </div>
+
+  <div class="field">
+    <span>Google Maps APIキー（任意）</span>
+    <input id="keyIn" type="password" autocomplete="off" placeholder="AIza...">
+    <label class="check"><input id="keySave" type="checkbox"> このブラウザに保存する</label>
+  </div>
+
+  <div id="setupErr" class="err-line"></div>
+  <div class="row">
+    <button id="bCancel" type="button">閉じる</button>
+    <button id="bStart" type="button" class="primary">開始</button>
+  </div>
+</dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+"use strict";
+/* ============================================================
+   設定値（ここを変えれば挙動を調整できます）
+   ============================================================ */
+const CFG = {
+  stepM: 20,          // 経路を何mごとに区切って「1歩」とするか
+  intervalMs: 1200,   // 再生時の1歩あたりの表示間隔
+  radiusM: 30,        // 各地点からストリートビューを探す半径
+  lookAheadM: 30,     // 視線方向を決めるために何m先を見るか
+  prefetch: 3,        // 再生中に先読みする歩数
+  gradeWindowM: 50,   // 勾配を計算する前後の距離
+  smoothM: 60,        // 累積標高計算用の平滑化幅
+  keyStorage: "routePreviewWalker.apiKey"
+};
+
+const $ = s => document.querySelector(s);
+const state = {
+  raw: [], pts: [], ele: [], hasEle: false, name: "",
+  i: 0, heading: 0, playing: false, timer: null,
+  SV: null, sv: null, pano: null, curPano: null,
+  cache: new Map(), reqCount: 0, token: 0, follow: true,
+  up: 0, down: 0, pendingFile: null
+};
+
+/* ---------- storage (wrapped: may be unavailable) ---------- */
+function saveKey(v){ try{ v ? localStorage.setItem(CFG.keyStorage, v) : localStorage.removeItem(CFG.keyStorage); }catch(e){} }
+function loadKey(){ try{ return localStorage.getItem(CFG.keyStorage) || ""; }catch(e){ return ""; } }
+
+/* ---------- geo ---------- */
+const toR = Math.PI / 180;
+function hav(a, b){
+  const dLat = (b.lat - a.lat) * toR, dLon = (b.lon - a.lon) * toR;
+  const s = Math.sin(dLat/2)**2 + Math.cos(a.lat*toR) * Math.cos(b.lat*toR) * Math.sin(dLon/2)**2;
+  return 2 * 6371008.8 * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+function bearing(a, b){
+  const y = Math.sin((b.lon - a.lon)*toR) * Math.cos(b.lat*toR);
+  const x = Math.cos(a.lat*toR)*Math.sin(b.lat*toR) - Math.sin(a.lat*toR)*Math.cos(b.lat*toR)*Math.cos((b.lon - a.lon)*toR);
+  return (Math.atan2(y, x) / toR + 360) % 360;
+}
+
+/* ---------- GPX ---------- */
+function parseGPX(text){
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length) throw new Error("GPXとして読み込めませんでした。ファイルの中身がXMLか確認してください。");
+  let nodes = Array.from(doc.getElementsByTagName("trkpt"));
+  if (nodes.length < 2) nodes = Array.from(doc.getElementsByTagName("rtept"));
+  const pts = [];
+  for (const n of nodes){
+    const lat = parseFloat(n.getAttribute("lat")), lon = parseFloat(n.getAttribute("lon"));
+    if (!isFinite(lat) || !isFinite(lon)) continue;
+    const e = n.getElementsByTagName("ele")[0];
+    const ele = e ? parseFloat(e.textContent) : NaN;
+    const last = pts[pts.length - 1];
+    if (last && last.lat === lat && last.lon === lon) continue;
+    pts.push({ lat, lon, ele: isFinite(ele) ? ele : null });
+  }
+  if (pts.length < 2) throw new Error("経路の点（trkpt / rtept）が2つ以上見つかりません。");
+  const nm = doc.getElementsByTagName("name")[0];
+  return { pts, name: nm ? nm.textContent.trim() : "" };
+}
+
+function resample(raw, step){
+  const cum = [0];
+  for (let k = 1; k < raw.length; k++) cum.push(cum[k-1] + hav(raw[k-1], raw[k]));
+  const total = cum[cum.length - 1];
+  const out = [];
+  let j = 0;
+  for (let d = 0; d < total - step * 0.3; d += step){
+    while (j < raw.length - 2 && cum[j+1] < d) j++;
+    const seg = cum[j+1] - cum[j];
+    const t = seg > 0 ? (d - cum[j]) / seg : 0;
+    const a = raw[j], b = raw[j+1];
+    let ele = null;
+    if (a.ele != null && b.ele != null) ele = a.ele + (b.ele - a.ele) * t;
+    else ele = a.ele != null ? a.ele : b.ele;
+    out.push({ lat: a.lat + (b.lat - a.lat)*t, lon: a.lon + (b.lon - a.lon)*t, ele, d });
+  }
+  const L = raw[raw.length - 1];
+  out.push({ lat: L.lat, lon: L.lon, ele: L.ele, d: total });
+  return out;
+}
+
+/* 標高：欠損を補間 → 移動平均で平滑化 → 累積昇降 */
+function buildElevation(){
+  const p = state.pts;
+  const raw = p.map(x => x.ele);
+  const known = raw.filter(v => v != null).length;
+  state.hasEle = known >= 2;
+  if (!state.hasEle){ state.ele = raw.map(() => null); state.up = state.down = 0; return; }
+  // fill gaps linearly
+  const filled = raw.slice();
+  let lastIdx = -1;
+  for (let k = 0; k < filled.length; k++){
+    if (filled[k] == null) continue;
+    if (lastIdx === -1){ for (let m = 0; m < k; m++) filled[m] = filled[k]; }
+    else if (k - lastIdx > 1){
+      for (let m = lastIdx + 1; m < k; m++) filled[m] = filled[lastIdx] + (filled[k] - filled[lastIdx]) * (m - lastIdx) / (k - lastIdx);
+    }
+    lastIdx = k;
+  }
+  for (let m = lastIdx + 1; m < filled.length; m++) filled[m] = filled[lastIdx];
+  const w = Math.max(1, Math.round(CFG.smoothM / CFG.stepM / 2));
+  const sm = filled.map((_, k) => {
+    let s = 0, c = 0;
+    for (let m = Math.max(0, k - w); m <= Math.min(filled.length - 1, k + w); m++){ s += filled[m]; c++; }
+    return s / c;
+  });
+  state.ele = sm;
+  let up = 0, down = 0;
+  for (let k = 1; k < sm.length; k++){ const d = sm[k] - sm[k-1]; if (d > 0) up += d; else down -= d; }
+  state.up = up; state.down = down;
+}
+
+function gradeAt(i){
+  if (!state.hasEle) return null;
+  const w = Math.max(1, Math.round(CFG.gradeWindowM / CFG.stepM));
+  const a = Math.max(0, i - w), b = Math.min(state.pts.length - 1, i + w);
+  const dd = state.pts[b].d - state.pts[a].d;
+  if (dd <= 0) return null;
+  return (state.ele[b] - state.ele[a]) / dd * 100;
+}
+
+/* ---------- Map (Leaflet + OSM) ---------- */
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const map = L.map("map", { zoomControl: true }).setView([35.5, 139.6], 10);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+let routeLine = null, doneLine = null;
+const noSvLayer = L.layerGroup().addTo(map);
+const meIcon = L.divIcon({ className: "", html: '<div class="me"><i></i></div>', iconSize: [26,26], iconAnchor: [13,13] });
+const meMarker = L.marker([0,0], { icon: meIcon, interactive: false, keyboard: false });
+
+function drawRoute(){
+  if (routeLine) routeLine.remove();
+  if (doneLine) doneLine.remove();
+  noSvLayer.clearLayers();
+  const ll = state.pts.map(p => [p.lat, p.lon]);
+  routeLine = L.polyline(ll, { color: cssVar("--route"), weight: 5, opacity: .75 }).addTo(map);
+  doneLine = L.polyline([], { color: cssVar("--done"), weight: 6, opacity: .95 }).addTo(map);
+  meMarker.addTo(map);
+  map.fitBounds(routeLine.getBounds(), { padding: [24,24] });
+}
+function updateMap(){
+  const p = state.pts[state.i];
+  meMarker.setLatLng([p.lat, p.lon]);
+  const el = meMarker.getElement();
+  if (el) el.firstChild.style.transform = `rotate(${state.heading}deg)`;
+  doneLine.setLatLngs(state.pts.slice(0, state.i + 1).map(q => [q.lat, q.lon]));
+  if (state.follow && !map.getBounds().pad(-0.25).contains([p.lat, p.lon])) map.panTo([p.lat, p.lon]);
+}
+function markNoSv(i){
+  const p = state.pts[i];
+  L.circleMarker([p.lat, p.lon], { radius: 3, color: cssVar("--nosv"), weight: 1, fillOpacity: .9, interactive: false }).addTo(noSvLayer);
+}
+function nearestIndex(lat, lon){
+  let best = 0, bd = Infinity;
+  const q = { lat, lon };
+  for (let k = 0; k < state.pts.length; k++){ const d = hav(q, state.pts[k]); if (d < bd){ bd = d; best = k; } }
+  return best;
+}
+map.on("click", e => { if (!state.pts.length) return; pause(); show(nearestIndex(e.latlng.lat, e.latlng.lng)); });
+
+/* ---------- Elevation profile (canvas, also the scrubber) ---------- */
+const cv = $("#profile");
+function drawProfile(){
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){ cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr); }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const pts = state.pts;
+  if (!pts.length) return;
+  const total = pts[pts.length - 1].d || 1;
+  const top = 6, bottom = h - 16;
+  const X = d => d / total * w;
+  ctx.font = `12px ${cssVar("--num")}`;
+  ctx.fillStyle = cssVar("--muted");
+
+  let Y;
+  if (state.hasEle){
+    let mn = Infinity, mx = -Infinity;
+    for (const v of state.ele){ if (v < mn) mn = v; if (v > mx) mx = v; }
+    const span = Math.max(20, mx - mn);
+    mn -= span * .08; mx = mn + span * 1.16;
+    Y = v => bottom - (v - mn) / (mx - mn) * (bottom - top);
+    const path = () => { ctx.beginPath(); ctx.moveTo(0, bottom); pts.forEach((p,k) => ctx.lineTo(X(p.d), Y(state.ele[k]))); ctx.lineTo(w, bottom); ctx.closePath(); };
+    path(); ctx.fillStyle = cssVar("--elev"); ctx.fill();
+    // walked part
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, X(pts[state.i].d), h); ctx.clip();
+    path(); ctx.globalAlpha = .45; ctx.fillStyle = cssVar("--done"); ctx.fill(); ctx.restore();
+    // outline
+    ctx.beginPath(); pts.forEach((p,k) => k ? ctx.lineTo(X(p.d), Y(state.ele[k])) : ctx.moveTo(X(p.d), Y(state.ele[k])));
+    ctx.strokeStyle = cssVar("--done"); ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = cssVar("--muted");
+    ctx.textAlign = "left";
+    ctx.fillText(`${Math.round(mx - span*.08)} m`, 4, top + 10);
+  } else {
+    ctx.fillStyle = cssVar("--muted"); ctx.textAlign = "center";
+    ctx.fillText("このGPXには標高データがありません（位置の移動には使えます）", w/2, h/2);
+  }
+
+  // km ticks
+  const km = total / 1000;
+  const steps = [0.1,0.2,0.5,1,2,5,10,20,50];
+  const tick = steps.find(s => km / s <= Math.max(3, Math.floor(w / 70))) || 100;
+  ctx.fillStyle = cssVar("--muted"); ctx.textAlign = "center";
+  for (let t = tick; t < km; t += tick){
+    const x = X(t*1000);
+    ctx.fillRect(x, bottom, 1, 4);
+    ctx.fillText(`${+t.toFixed(1)}`, x, h - 2);
+  }
+  // playhead
+  const px = X(pts[state.i].d);
+  ctx.fillStyle = cssVar("--route");
+  ctx.fillRect(Math.round(px) - 1, 0, 2, bottom);
+  if (Y && state.hasEle){ ctx.beginPath(); ctx.arc(px, Y(state.ele[state.i]), 4, 0, Math.PI*2); ctx.fill(); }
+}
+function idxFromX(clientX){
+  const r = cv.getBoundingClientRect();
+  const f = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+  const total = state.pts[state.pts.length - 1].d;
+  const target = f * total;
+  let k = Math.round(target / CFG.stepM);
+  return Math.min(state.pts.length - 1, Math.max(0, k));
+}
+let scrubbing = false;
+cv.addEventListener("pointerdown", e => { if (!state.pts.length) return; pause(); scrubbing = true; cv.setPointerCapture(e.pointerId); preview(idxFromX(e.clientX)); });
+cv.addEventListener("pointermove", e => { if (scrubbing) preview(idxFromX(e.clientX)); });
+cv.addEventListener("pointerup",   e => { if (!scrubbing) return; scrubbing = false; show(idxFromX(e.clientX)); });
+cv.addEventListener("pointercancel", () => { scrubbing = false; });
+
+/* ---------- Readout ---------- */
+function updateReadout(){
+  const p = state.pts[state.i];
+  const total = state.pts[state.pts.length - 1].d;
+  $("#rDist").textContent = (p.d / 1000).toFixed(2);
+  $("#rTotal").textContent = (total / 1000).toFixed(2);
+  $("#rEle").textContent = state.hasEle ? Math.round(state.ele[state.i]) : "—";
+  const g = gradeAt(state.i);
+  $("#rGrade").textContent = g == null ? "—" : (g > 0 ? "+" : "") + g.toFixed(1);
+  $("#rUp").textContent = Math.round(state.up);
+  $("#rDown").textContent = Math.round(state.down);
+}
+function updateReq(){
+  $("#rReq").textContent = state.sv ? `ストリートビュー検索 ${state.reqCount} 回（このセッション）` : "";
+}
+
+/* ---------- Street View ---------- */
+function svMsg(text, isErr){
+  const m = $("#svMsg");
+  if (!text){ m.hidden = true; return; }
+  m.hidden = false; m.textContent = text; m.classList.toggle("err", !!isErr);
+}
+
+function loadGmaps(key){
+  return new Promise((resolve, reject) => {
+    if (window.google && google.maps && google.maps.importLibrary) return resolve();
+    window.__rpwInit = () => resolve();
+    window.gm_authFailure = () => svMsg("APIキーが認証されませんでした。キーの値、Maps JavaScript API の有効化、請求先アカウント、リファラー制限を確認してください。", true);
+    const s = document.createElement("script");
+    s.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(key) + "&v=weekly&loading=async&callback=__rpwInit";
+    s.async = true;
+    s.onerror = () => reject(new Error("Google Maps を読み込めませんでした。ネットワーク接続を確認してください。"));
+    document.head.appendChild(s);
+  });
+}
+
+async function initStreetView(key){
+  await loadGmaps(key);
+  const lib = await google.maps.importLibrary("streetView");
+  state.SV = lib;
+  state.sv = new lib.StreetViewService();
+  state.pano = new lib.StreetViewPanorama($("#pano"), {
+    addressControl: false, linksControl: true, panControl: false, zoomControl: false,
+    fullscreenControl: true, motionTracking: false, motionTrackingControl: false,
+    showRoadLabels: false, clickToGo: true, visible: true
+  });
+  state.pano.addListener("pano_changed", () => { state.curPano = state.pano.getPano(); });
+  updateReq();
+  if (state.pts.length) show(state.i);
+  else svMsg("GPXを読み込むと、ここにストリートビューが表示されます");
+}
+
+function lookup(i){
+  if (state.cache.has(i)) return state.cache.get(i);
+  const p = state.pts[i];
+  const pr = (async () => {
+    state.reqCount++; updateReq();
+    try{
+      const r = await state.sv.getPanorama({
+        location: { lat: p.lat, lng: p.lon },
+        radius: CFG.radiusM,
+        preference: state.SV.StreetViewPreference.NEAREST,
+        source: state.SV.StreetViewSource.OUTDOOR
+      });
+      const loc = r.data.location;
+      return { pano: loc.pano, lat: loc.latLng.lat(), lon: loc.latLng.lng() };
+    }catch(e){
+      if (e && e.code && e.code !== "ZERO_RESULTS"){
+        state.cache.delete(i);           // 一時的なエラーは再試行できるように
+        return { error: String(e.code) };
+      }
+      markNoSv(i);
+      return null;
+    }
+  })();
+  state.cache.set(i, pr);
+  return pr;
+}
+
+function headingFor(i, from){
+  const n = state.pts.length;
+  const aheadSteps = Math.max(1, Math.round(CFG.lookAheadM / CFG.stepM));
+  if (i >= n - 1) return bearing(state.pts[Math.max(0, n - 2)], state.pts[n - 1]);
+  const ahead = state.pts[Math.min(n - 1, i + aheadSteps)];
+  const base = (from && hav(from, ahead) > 8) ? from : state.pts[i];
+  return bearing(base, ahead);
+}
+
+/* 地図・グラフ・数値だけ更新（ドラッグ中用。APIを呼ばない） */
+function preview(i){
+  state.i = Math.max(0, Math.min(state.pts.length - 1, i));
+  state.heading = headingFor(state.i);
+  updateMap(); drawProfile(); updateReadout();
+}
+
+async function show(i){
+  preview(i);
+  if (!state.pano) return;
+  const idx = state.i;
+  const tok = ++state.token;
+  const r = await lookup(idx);
+  if (tok !== state.token) return;
+  if (r && r.error){ svMsg(`ストリートビューの取得でエラーが発生しました（${r.error}）。時間をおいて再試行してください。`, true); return; }
+  if (!r){ svMsg(`この地点の半径${CFG.radiusM}m以内にストリートビューがありません`); }
+  else {
+    svMsg("");
+    if (r.pano !== state.curPano){ state.pano.setPano(r.pano); state.curPano = r.pano; }
+    state.heading = headingFor(idx, { lat: r.lat, lon: r.lon });
+    state.pano.setPov({ heading: state.heading, pitch: 0 });
+    updateMap();
+  }
+  for (let k = 1; k <= CFG.prefetch; k++) if (idx + k < state.pts.length) lookup(idx + k);
+}
+
+/* ---------- Playback ---------- */
+function play(){
+  if (!state.pts.length || state.playing) return;
+  if (state.i >= state.pts.length - 1) show(0);
+  state.playing = true; $("#bPlay").textContent = "一時停止";
+  tick();
+}
+async function tick(){
+  if (!state.playing) return;
+  if (state.i >= state.pts.length - 1){ pause(); return; }
+  const t0 = performance.now();
+  await show(state.i + 1);
+  if (!state.playing) return;
+  state.timer = setTimeout(tick, Math.max(0, CFG.intervalMs - (performance.now() - t0)));
+}
+function pause(){
+  state.playing = false; clearTimeout(state.timer);
+  $("#bPlay").textContent = "再生";
+}
+
+/* ---------- Route setup ---------- */
+function rebuild(keepDistance){
+  const d = keepDistance && state.pts.length ? state.pts[state.i].d : 0;
+  state.pts = resample(state.raw, CFG.stepM);
+  state.cache.clear();          // インデックスが変わるのでキャッシュを破棄
+  buildElevation();
+  drawRoute();
+  show(Math.min(state.pts.length - 1, Math.round(d / CFG.stepM)));
+}
+
+function readFile(file){
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result);
+    fr.onerror = () => rej(new Error("ファイルを読み込めませんでした。"));
+    fr.readAsText(file);
+  });
+}
+
+/* ---------- UI wiring ---------- */
+const dlg = $("#setup");
+function openSetup(){ $("#setupErr").textContent = ""; $("#keyIn").value = loadKey(); $("#keySave").checked = !!loadKey(); dlg.showModal(); }
+$("#btnSetup").onclick = openSetup;
+$("#bCancel").onclick = () => dlg.close();
+
+const drop = $("#drop");
+drop.onclick = () => $("#fileIn").click();
+drop.onkeydown = e => { if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#fileIn").click(); } };
+$("#fileIn").onchange = e => setPending(e.target.files[0]);
+function setPending(f){ if (!f) return; state.pendingFile = f; $("#dropName").textContent = f.name; }
+["dragenter","dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => setPending(e.dataTransfer.files[0]));
+
+// ダイアログ外でもGPXをドロップできる
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", async e => {
+  e.preventDefault();
+  if (dlg.open) return;
+  const f = e.dataTransfer.files[0];
+  if (f) try{ await loadRouteFile(f); }catch(err){ openSetup(); $("#setupErr").textContent = err.message; }
+});
+
+async function loadRouteFile(f){
+  const { pts, name } = parseGPX(await readFile(f));
+  pause();
+  state.raw = pts; state.name = name || f.name;
+  $("#fileName").textContent = state.name;
+  rebuild(false);
+}
+
+$("#bStart").onclick = async () => {
+  const err = $("#setupErr"); err.textContent = "";
+  const key = $("#keyIn").value.trim();
+  try{
+    if (state.pendingFile){ await loadRouteFile(state.pendingFile); state.pendingFile = null; $("#dropName").textContent = ""; }
+    else if (!state.raw.length){ err.textContent = "GPXファイルを選んでください。"; return; }
+    saveKey($("#keySave").checked ? key : "");
+    dlg.close();
+    if (key && !state.sv){
+      svMsg("ストリートビューを準備しています…");
+      await initStreetView(key);
+    } else if (!key && !state.sv){
+      svMsg("APIキーを設定すると、ここにストリートビューが表示されます");
+    }
+  }catch(e2){
+    if (!dlg.open) dlg.showModal();
+    err.textContent = e2.message;
+  }
+};
+
+$("#bPlay").onclick = () => state.playing ? pause() : play();
+$("#bPrev").onclick = () => { if (!state.pts.length) return; pause(); show(state.i - 1); };
+$("#bNext").onclick = () => { if (!state.pts.length) return; pause(); show(state.i + 1); };
+$("#sSpeed").onchange = e => { CFG.intervalMs = +e.target.value; };
+$("#sStep").onchange = e => { CFG.stepM = +e.target.value; if (state.raw.length){ pause(); rebuild(true); } };
+$("#cFollow").onchange = e => { state.follow = e.target.checked; };
+
+document.addEventListener("keydown", e => {
+  if (dlg.open || !state.pts.length) return;
+  if (["INPUT","SELECT","TEXTAREA"].includes(document.activeElement.tagName)) return;
+  if (e.key === " "){ e.preventDefault(); state.playing ? pause() : play(); }
+  else if (e.key === "ArrowRight"){ pause(); show(state.i + 1); }
+  else if (e.key === "ArrowLeft"){ pause(); show(state.i - 1); }
+});
+
+new ResizeObserver(() => { drawProfile(); map.invalidateSize(); }).observe(document.body);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (!state.pts.length) return;
+  routeLine.setStyle({ color: cssVar("--route") });
+  doneLine.setStyle({ color: cssVar("--done") });
+  drawProfile();
+});
+
+/* ---------- boot ---------- */
+(async () => {
+  const k = loadKey();
+  openSetup();
+  if (k){ try{ await initStreetView(k); }catch(e){ svMsg(e.message, true); } }
+})();
+</script>
+</body>
+</html>
