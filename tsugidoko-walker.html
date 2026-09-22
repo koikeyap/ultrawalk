@@ -1,0 +1,1047 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>次どこウォーカー</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#1E2B24; --paper:#F2F5F1; --card:#FFFFFF; --line:#D3DCD5; --muted:#5E6D64;
+  --go:#1F6F5C; --go-ink:#FFFFFF; --warn:#9A3B26;
+  --jp:"BIZ UDPGothic","Hiragino Sans","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;
+  --num:"Barlow Semi Condensed","Helvetica Neue",Arial,sans-serif;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%;margin:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--jp);font-size:15px;line-height:1.55;display:flex;flex-direction:column}
+#map{height:46vh;min-height:260px;flex:none;border-bottom:1px solid var(--line);background:#E6ECE7}
+#panel{flex:1;overflow-y:auto;padding:14px 14px 28px;-webkit-overflow-scrolling:touch}
+@media (min-width:900px){
+  body{flex-direction:row}
+  #map{height:100%;flex:1;border-bottom:0;border-right:1px solid var(--line)}
+  #panel{flex:none;width:430px}
+}
+h1,h2{margin:0;font-weight:700}
+.where{font-size:20px;line-height:1.35}
+.where small{display:block;font-size:13px;font-weight:400;color:var(--muted);margin-top:2px}
+.num{font-family:var(--num);font-weight:600;font-variant-numeric:tabular-nums}
+button,input{font:inherit;color:inherit}
+button{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px 12px;cursor:pointer;touch-action:manipulation}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #6FA8DC;outline-offset:2px}
+.primary{background:var(--go);border-color:var(--go);color:var(--go-ink);font-weight:700}
+input[type=text],input[type=password],input[type=number],input[type=url]{font-size:16px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--card);min-width:0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.block{margin-top:14px}
+.dist input{width:5.5em;font-family:var(--num);font-weight:600;font-size:20px;text-align:right}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{padding:5px 11px;border-radius:999px;font-size:14px}
+.chip[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.actions button{padding:11px 8px}
+#status{min-height:1.4em;margin-top:10px;font-size:13px;color:var(--muted)}
+#status.err{color:var(--warn)}
+.note{font-size:12px;color:var(--muted);margin:4px 0 0}
+
+/* 候補カード：左の色帯が地図の線の色と対応する */
+.cands{display:grid;gap:10px;margin-top:6px}
+.cand{background:var(--card);border:1px solid var(--line);border-left:6px solid var(--c);border-radius:12px;padding:10px 12px 10px 11px;cursor:pointer}
+.cand.sel{border-color:var(--c);box-shadow:0 0 0 1px var(--c) inset}
+.cand header{display:flex;gap:10px;align-items:flex-start}
+.rank{font-family:var(--num);font-weight:600;font-size:15px;color:var(--c);min-width:1em;padding-top:2px}
+.dest{flex:1;min-width:0}
+.dest b{display:block;font-size:17px;line-height:1.3;overflow-wrap:anywhere}
+.dest small{color:var(--muted);font-size:12px}
+.km{text-align:right;line-height:1}
+.km b{font-family:var(--num);font-weight:600;font-size:30px}
+.km small{display:block;font-size:11px;color:var(--muted);margin-top:3px}
+.strip{position:relative;height:36px;margin:8px 2px 2px}
+.strip::before{content:"";position:absolute;left:0;right:0;top:17px;height:3px;border-radius:2px;background:var(--c);opacity:.55}
+.strip span{position:absolute;transform:translateX(-50%);font-size:13px;line-height:1}
+.strip .up{top:0}.strip .dn{top:22px}
+.facts{margin:6px 0 0;font-size:14px}
+.facts span{margin-right:10px;white-space:nowrap}
+.sub{margin:2px 0 0;font-size:12px;color:var(--muted)}
+.sub span{margin-right:10px;white-space:nowrap}
+.sights{margin:4px 0 0;font-size:13px;overflow-wrap:anywhere}
+.cand footer{display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px}
+.basis{font-size:12px;color:var(--muted)}
+.adopt{background:var(--go);border-color:var(--go);color:#fff;font-weight:700;padding:7px 14px}
+
+.legs{list-style:none;margin:6px 0 0;padding:0;counter-reset:leg}
+.legs li{display:flex;gap:8px;align-items:baseline;padding:6px 0;border-top:1px solid var(--line);font-size:14px;counter-increment:leg}
+.legs li::before{content:counter(leg);font-family:var(--num);font-weight:600;color:var(--muted);min-width:1.2em}
+.legs li span{flex:1;min-width:0;overflow-wrap:anywhere}
+.legs li b{font-family:var(--num);font-weight:600}
+.results{display:grid;gap:4px;margin-top:6px}
+.results button{text-align:left;font-size:14px;padding:7px 10px}
+details{margin-top:18px;border-top:1px solid var(--line);padding-top:10px}
+summary{cursor:pointer;font-size:14px;color:var(--muted)}
+details .row{margin-top:8px}
+label.inline{display:flex;gap:6px;align-items:center;font-size:14px}
+.ver{font-size:11px;color:var(--muted);margin-top:10px}
+
+.pin{width:18px;height:18px;border-radius:50%;background:var(--ink);border:3px solid #fff;box-shadow:0 0 0 2px var(--ink)}
+.legend-num{width:22px;height:22px;border-radius:50%;background:#fff;border:2px solid var(--ink);display:grid;place-items:center;font:600 12px/1 var(--num)}
+.poi{font-size:16px;line-height:1;text-shadow:0 0 2px #fff,0 0 2px #fff}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<div id="map" role="application" aria-label="地図"></div>
+<main id="panel">
+
+  <!-- 起点がまだないとき -->
+  <section id="startBox">
+    <h1 class="where">どこから歩きますか</h1>
+    <p class="note">地図をタップしても起点を置けます。</p>
+    <div class="row block">
+      <button id="btnHere" class="primary">現在地から</button>
+      <button id="btnHomeStart" hidden>自宅から</button>
+    </div>
+  </section>
+
+  <!-- 起点があるとき -->
+  <section id="planBox" hidden>
+    <h1 class="where" id="whereTitle"></h1>
+
+    <div class="block row dist">
+      <input id="dist" type="number" inputmode="decimal" min="0.5" max="20" step="0.5" aria-label="次に歩く距離（km）">
+      <span>km 歩く</span>
+      <div class="chips" id="distChips">
+        <button class="chip" data-km="3">3</button><button class="chip" data-km="5">5</button>
+        <button class="chip" data-km="8">8</button><button class="chip" data-km="10">10</button>
+      </div>
+    </div>
+
+    <div class="block chips" id="prefChips" aria-label="重視すること">
+      <button class="chip" data-pref="sights" aria-pressed="false">見どころ</button>
+      <button class="chip" data-pref="supply" aria-pressed="false">補給しやすさ</button>
+      <button class="chip" data-pref="quiet" aria-pressed="false">静かな道</button>
+      <button class="chip" data-pref="flat" aria-pressed="false">登り控えめ</button>
+    </div>
+
+    <div class="block actions">
+      <button id="btnFind" class="primary">候補を探す</button>
+      <button id="btnFinish">駅・自宅で終える</button>
+    </div>
+  </section>
+
+  <div id="status" aria-live="polite"></div>
+  <div id="backBar" class="block" hidden><button id="btnBack">行き先の候補に戻る</button></div>
+  <div id="cands" class="cands"></div>
+
+  <section class="block">
+    <div class="row">
+      <input id="q" type="text" placeholder="場所の名前で探す" aria-label="場所の名前" style="flex:1">
+      <button id="btnSearch">探す</button>
+    </div>
+    <div id="results" class="results"></div>
+  </section>
+
+  <section id="legsBox" class="block" hidden>
+    <h2 style="font-size:15px">歩く順番</h2>
+    <ol id="legs" class="legs"></ol>
+    <div class="row block">
+      <button id="btnUndo">1つ戻す</button>
+      <button id="btnGpx">GPXを保存</button>
+      <button id="btnReset">最初から</button>
+    </div>
+  </section>
+
+  <details id="settings">
+    <summary>設定</summary>
+    <div class="row">
+      <input id="code" type="password" placeholder="合言葉" autocomplete="off" style="flex:1">
+      <button id="btnCode">保存</button>
+    </div>
+    <p class="note">合言葉があると、Jevで候補の順番を決めます。ないときはアプリ内の採点で並べます。</p>
+    <div class="row"><label class="inline"><input id="useJev" type="checkbox"> Jevで順番を決める</label></div>
+    <div class="row">
+      <button id="btnSetHome">今の地点を自宅にする</button>
+      <button id="btnClearHome">自宅を消す</button>
+    </div>
+    <p class="note" id="homeNote"></p>
+    <div class="row">
+      <input id="proxy" type="url" placeholder="中継用WorkerのURL" style="flex:1">
+      <button id="btnProxy">保存</button>
+    </div>
+    <p class="ver" id="ver"></p>
+  </details>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+"use strict";
+const APP_VERSION = "0.2.0";
+
+/* ===== 設定 ===== */
+const CFG = {
+  proxy: "https://shortlink.taiji007ai.workers.dev",
+  osrm: "https://routing.openstreetmap.de/routed-foot",
+  detour: 1.3,          // 道のり÷直線距離の初期値。探すたびに実測で更新する
+  tolerance: 0.2,       // 目標距離からのずれの許容（±20%）
+  dropAt: 0.4,          // これ以上ずれた候補は出さない
+  sectors: 8,           // 行き先を探す方角の数
+  perSector: 5,         // 1方角あたり距離を測る行き先の数
+  corridorM: 150,       // 経路から何m以内を「沿道」とみなすか
+  showTop: 5,
+  brouterProfile: "hiking-mountain",
+  brouterAlts: 2,       // 道順の候補としてBRouterに出させる案の数（alternativeidx 0〜）
+  finishStationM: 4000, // 「駅・自宅で終える」で駅を探す範囲
+};
+const LS = { plan:"tsugidoko.plan.v1", home:"tsugidoko.home", code:"tsugidoko.code", prefs:"tsugidoko.prefs",
+             dist:"tsugidoko.dist", jev:"tsugidoko.useJev", proxy:"tsugidoko.proxy", detour:"tsugidoko.detour" };
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} },
+  del(k){ try{ localStorage.removeItem(k); }catch(e){} }
+};
+const COLORS = ["#C8414F", "#2A7DB0", "#D98E04", "#3B8A3E", "#7A4EAB", "#5B6B73", "#B55A1F", "#1D8C8C"];
+const DIRS = ["北","北東","東","南東","南","南西","西","北西"];
+const TYPE_LABEL = { station:"駅", park:"公園", worship:"寺社", view:"展望地", museum:"博物館", sight:"名所",
+                     peak:"山頂", historic:"史跡", point:"地点", home:"自宅", custom:"指定した場所" };
+const POI_ICON = { konbini:"🏪", toilet:"🚻", water:"🚰", cafe:"☕", worship:"⛩️", view:"🌄", museum:"🏛️", sight:"📷", historic:"🏯" };
+const POI_LABEL = { konbini:"コンビニ", toilet:"トイレ", water:"水飲み場", cafe:"カフェ", worship:"寺社", view:"展望地", museum:"博物館", sight:"名所", historic:"史跡" };
+const SIGHT = new Set(["worship","view","museum","sight","historic"]);
+const SUPPLY = new Set(["konbini","toilet","water"]);
+
+/* ===== 状態 ===== */
+const state = {
+  start: null,         // {lat, lon, name}
+  legs: [],            // [{to:{lat,lon}, name, type, km, ascent, coords:[[lat,lon,ele],...]}]
+  cands: [], sel: -1, mode: "", basis: "",
+  prevList: null,      // 道順を選ぶ画面から「行き先の候補」に戻るための控え
+  prefs: new Set(store.get(LS.prefs, [])),
+  detour: store.get(LS.detour, CFG.detour),
+  busy: false,
+};
+CFG.proxy = store.get(LS.proxy, CFG.proxy);
+
+/* ===== 小道具 ===== */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const toR = Math.PI / 180;
+function hav(a, b){
+  const R = 6371000, dLat = (b.lat - a.lat) * toR, dLon = (b.lon - a.lon) * toR;
+  const h = Math.sin(dLat/2)**2 + Math.cos(a.lat*toR) * Math.cos(b.lat*toR) * Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function bearing(a, b){
+  const y = Math.sin((b.lon - a.lon)*toR) * Math.cos(b.lat*toR);
+  const x = Math.cos(a.lat*toR)*Math.sin(b.lat*toR) - Math.sin(a.lat*toR)*Math.cos(b.lat*toR)*Math.cos((b.lon - a.lon)*toR);
+  return (Math.atan2(y, x) / toR + 360) % 360;
+}
+function dest(p, brg, m){
+  const R = 6371000, d = m / R, t = brg * toR, la = p.lat * toR, lo = p.lon * toR;
+  const la2 = Math.asin(Math.sin(la)*Math.cos(d) + Math.cos(la)*Math.sin(d)*Math.cos(t));
+  const lo2 = lo + Math.atan2(Math.sin(t)*Math.sin(d)*Math.cos(la), Math.cos(d) - Math.sin(la)*Math.sin(la2));
+  return { lat: la2 / toR, lon: lo2 / toR };
+}
+const dirName = brg => DIRS[Math.round(brg / 45) % 8];
+const median = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+function fetchT(url, opts = {}, ms = 30000){
+  const c = new AbortController(); const t = setTimeout(() => c.abort(), ms);
+  return fetch(url, { ...opts, signal: c.signal })
+    .catch(e => { throw new Error(e.name === "AbortError" ? "時間切れ" : "接続できません"); })
+    .finally(() => clearTimeout(t));
+}
+async function pool(items, n, fn){
+  const out = new Array(items.length); let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length){ const k = i++; try{ out[k] = await fn(items[k], k); }catch(e){ out[k] = { error: e }; } }
+  }));
+  return out;
+}
+function status(msg, isErr){ const el = $("#status"); el.textContent = msg || ""; el.classList.toggle("err", !!isErr); }
+const pct = x => Math.round(x * 100) + "%";
+const ll6 = p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`;
+
+/* ===== 経路エンジン =====
+   OSRM：速い。行き先候補の距離をまとめて測る（table）と、候補ごとのおおまかな道のり（route）に使う。
+   BRouter：遅いが標高と道路タグが付く。行き先を決めたあとの道順の候補づくりにだけ使う。 */
+async function osrmTable(from, list){
+  const coords = [from, ...list].map(ll6).join(";");
+  const r = await fetchT(`${CFG.osrm}/table/v1/driving/${coords}?sources=0&annotations=distance`, {}, 20000);
+  if (!r.ok) throw new Error(`OSRM ${r.status}`);
+  const j = await r.json();
+  if (j.code !== "Ok" || !j.distances) throw new Error(j.code || "応答なし");
+  return j.distances[0].slice(1);
+}
+async function osrmRoute(a, b){
+  const coords = `${ll6(a)};${ll6(b)}`, errs = []; let j = null;
+  try{
+    const r = await fetchT(`${CFG.osrm}/route/v1/driving/${coords}?overview=full&geometries=geojson`, {}, 20000);
+    if (r.ok) j = await r.json(); else errs.push(`直接 ${r.status}`);
+  }catch(e){ errs.push(`直接 ${e.message}`); }
+  if (!j && CFG.proxy){
+    try{
+      const r = await fetchT(`${CFG.proxy}/route?engine=osrm&coords=${encodeURIComponent(coords)}`, {}, 20000);
+      if (r.ok) j = await r.json(); else errs.push(`中継 ${r.status}`);
+    }catch(e){ errs.push(`中継 ${e.message}`); }
+  }
+  if (!j) throw new Error(errs.join(" / "));
+  const rt = j.routes && j.routes[0];
+  if (!rt) throw new Error("経路が見つかりません");
+  return { coords: rt.geometry.coordinates.map(c => ({ lat: c[1], lon: c[0], ele: null })), km: rt.distance / 1000, ascent: null, road: null, engine: "osrm" };
+}
+async function brouter(a, b, alt = 0){
+  const ll = `${ll6(a)}|${ll6(b)}`;
+  const errs = []; let txt = null;
+  try{
+    const r = await fetchT(`https://brouter.de/brouter?lonlats=${ll}&profile=${CFG.brouterProfile}&alternativeidx=${alt}&format=geojson`, {}, 30000);
+    if (r.ok) txt = await r.text(); else errs.push(`直接 ${r.status}`);
+  }catch(e){ errs.push(`直接 ${e.message}`); }
+  if (!txt && CFG.proxy && alt === 0){   // Worker中継は案1（alternativeidx=0）だけ対応
+    try{
+      const r = await fetchT(`${CFG.proxy}/route?engine=brouter&coords=${encodeURIComponent(ll.replace("|", ";"))}`, {}, 30000);
+      if (r.ok) txt = await r.text(); else errs.push(`中継 ${r.status}`);
+    }catch(e){ errs.push(`中継 ${e.message}`); }
+  }
+  if (!txt) throw new Error(errs.join(" / "));
+  let j; try{ j = JSON.parse(txt); }catch(e){ throw new Error("経路が見つかりません"); }
+  const f = j.features && j.features[0];
+  if (!f || !f.geometry) throw new Error("経路が見つかりません");
+  const coords = f.geometry.coordinates.map(c => ({ lat: c[1], lon: c[0], ele: c[2] }));
+  const pr = f.properties || {};
+  let m = Number(pr["track-length"]);
+  if (!m){ m = 0; for (let i = 1; i < coords.length; i++) m += hav(coords[i-1], coords[i]); }
+  return { coords, km: m / 1000, ascent: Number(pr["filtered ascend"]) || 0, road: roadStats(pr.messages), engine: "brouter", alt };
+}
+/* BRouterの区間メッセージ（道路タグ付き）から、大通り・静かな道・未舗装の割合を出す */
+function roadStats(msgs){
+  if (!Array.isArray(msgs) || msgs.length < 2) return null;
+  const h = msgs[0], iD = h.indexOf("Distance"), iW = h.indexOf("WayTags");
+  if (iD < 0 || iW < 0) return null;
+  let tot = 0, busy = 0, quiet = 0, unpaved = 0;
+  for (let i = 1; i < msgs.length; i++){
+    const d = Number(msgs[i][iD]) || 0, t = String(msgs[i][iW] || "");
+    const hw = (t.match(/highway=([a-z_]+)/) || [])[1] || "";
+    tot += d;
+    if (/^(trunk|primary|secondary)(_link)?$/.test(hw)) busy += d;
+    if (/^(footway|path|pedestrian|track|living_street|steps|bridleway|cycleway)$/.test(hw)) quiet += d;
+    if (/surface=(unpaved|gravel|fine_gravel|dirt|ground|earth|grass|mud|sand|compacted)/.test(t)) unpaved += d;
+  }
+  return tot ? { busy: busy/tot, quiet: quiet/tot, unpaved: unpaved/tot } : null;
+}
+
+/* ===== Overpass =====
+   効率化の方針：
+   1) 地図を約1.7km四方のタイルに分け、行き先の元（駅・公園・寺社など）と沿道のスポットを同じ問い合わせで取る。
+      行き先探しで取ったタイルは、そのまま沿道のスポットにも使い回す。
+   2) 取ったタイルは端末（IndexedDB）に30日保存し、同じ場所は二度と聞かない。
+   3) 横に並んだタイルは1つの範囲にまとめ、問い合わせ文を短くする。
+   4) 1回の問い合わせは最大30タイル、同時に2本まで。失敗したら半分に割って取り直す。 */
+const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter"];
+async function overpass(q){
+  const opts = { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "data=" + encodeURIComponent(q) };
+  const errs = [];
+  for (const u of OVERPASS){
+    try{ const r = await fetchT(u, opts, 40000); if (r.ok) return await r.json(); errs.push(`${new URL(u).host} ${r.status}`); }
+    catch(e){ errs.push(`${new URL(u).host} ${e.message}`); }
+  }
+  if (CFG.proxy){
+    try{ const r = await fetchT(CFG.proxy + "/overpass", opts, 40000); if (r.ok) return await r.json(); errs.push(`中継 ${r.status}`); }
+    catch(e){ errs.push(`中継 ${e.message}`); }
+  }
+  throw new Error(errs.join(" / "));
+}
+const elLatLon = el => el.lat != null ? { lat: el.lat, lon: el.lon } : (el.center ? { lat: el.center.lat, lon: el.center.lon } : null);
+
+function anchorType(t){
+  if (t.railway === "station") return { type: "station", w: 3 };
+  if (t.leisure === "park") return { type: "park", w: 3 };
+  if (t.tourism === "viewpoint") return { type: "view", w: 3 };
+  if (t.amenity === "place_of_worship") return { type: "worship", w: 2 };
+  if (t.tourism === "museum") return { type: "museum", w: 2 };
+  if (t.tourism === "attraction") return { type: "sight", w: 2 };
+  if (t.natural === "peak") return { type: "peak", w: 2 };
+  if (t.historic) return { type: "historic", w: 1 };
+  return null;
+}
+function anchorName(t, type){ return type === "station" && !/駅$/.test(t.name) ? t.name + "駅" : t.name; }
+function worshipLabel(t){ return t.religion === "shinto" ? "神社" : t.religion === "buddhist" ? "寺" : "寺社"; }
+function poiKind(t){
+  if (t.shop === "convenience") return "konbini";
+  if (t.amenity === "toilets") return "toilet";
+  if (t.amenity === "drinking_water") return "water";
+  if (t.amenity === "cafe") return "cafe";
+  if (t.amenity === "place_of_worship" && t.name) return "worship";
+  if (t.tourism === "viewpoint") return "view";
+  if (t.tourism === "museum") return "museum";
+  if (t.tourism === "attraction") return "sight";
+  if (t.historic && t.name) return "historic";
+  return null;
+}
+/* Overpassの要素を、アプリで使う最小限の形にする（保存量を減らす） */
+function slimEl(el){
+  const t = el.tags || {}, p = elLatLon(el); if (!p) return null;
+  const kind = poiKind(t), at = t.name ? anchorType(t) : null;
+  if (!kind && !at) return null;
+  return {
+    id: el.type[0] + el.id, lat: +p.lat.toFixed(6), lon: +p.lon.toFixed(6), kind, name: t.name || t.brand || "",
+    label: kind ? (kind === "worship" ? worshipLabel(t) : POI_LABEL[kind]) : null,
+    a: at ? { type: at.type, w: at.w, name: anchorName(t, at.type), label: at.type === "worship" ? worshipLabel(t) : TYPE_LABEL[at.type] } : null
+  };
+}
+
+const TILE = 0.015, TILE_VER = "t2", TILE_TTL = 30 * 864e5;
+const tileCache = new Map();
+const tileKey = (lat, lon) => `${Math.floor(lat / TILE)}_${Math.floor(lon / TILE)}`;
+const cmpTile = (x, y) => { const [a1, b1] = x.split("_").map(Number), [a2, b2] = y.split("_").map(Number); return a1 - a2 || b1 - b2; };
+function tileKeysFor(grid){
+  const set = new Set(), mLat = CFG.corridorM / 111320;
+  for (const p of grid){
+    const mLon = CFG.corridorM / (111320 * Math.cos(p.lat * toR));
+    for (const dy of [-mLat, 0, mLat]) for (const dx of [-mLon, 0, mLon]) set.add(tileKey(p.lat + dy, p.lon + dx));
+  }
+  return set;
+}
+function tileKeysForCircle(p, R){
+  const dLat = R / 111320, dLon = R / (111320 * Math.cos(p.lat * toR)), set = new Set();
+  const a0 = Math.floor((p.lat - dLat) / TILE), a1 = Math.floor((p.lat + dLat) / TILE);
+  const b0 = Math.floor((p.lon - dLon) / TILE), b1 = Math.floor((p.lon + dLon) / TILE);
+  for (let a = a0; a <= a1; a++) for (let b = b0; b <= b1; b++){
+    // タイルの中で円の中心に一番近い点が円の外なら、そのタイルは取らない
+    const cl = { lat: Math.min(Math.max(p.lat, a * TILE), (a + 1) * TILE), lon: Math.min(Math.max(p.lon, b * TILE), (b + 1) * TILE) };
+    if (hav(p, cl) <= R) set.add(`${a}_${b}`);
+  }
+  return set;
+}
+function strips(keys){
+  const rows = new Map();
+  for (const k of keys){ const [a, b] = k.split("_").map(Number); if (!rows.has(a)) rows.set(a, []); rows.get(a).push(b); }
+  const out = [];
+  for (const [a, bs] of rows){
+    bs.sort((x, y) => x - y);
+    let s0 = bs[0], p0 = bs[0];
+    for (let i = 1; i <= bs.length; i++){
+      if (i < bs.length && bs[i] === p0 + 1){ p0 = bs[i]; continue; }
+      out.push([a * TILE, s0 * TILE, (a + 1) * TILE, (p0 + 1) * TILE]);
+      if (i < bs.length){ s0 = p0 = bs[i]; }
+    }
+  }
+  return out;
+}
+function tileQuery(keys){
+  let s = "[out:json][timeout:25];(";
+  for (const r of strips(keys)){
+    const bb = `(${r.map(v => v.toFixed(4)).join(",")})`;
+    s += `nwr[shop=convenience]${bb};nwr[amenity~"^(toilets|drinking_water|cafe)$"]${bb};nwr[amenity=place_of_worship][name]${bb};` +
+         `nwr[tourism~"^(viewpoint|attraction|museum)$"]${bb};nwr[historic][name]${bb};` +
+         `nwr[railway=station][name]${bb};nwr[leisure=park][name]${bb};node[natural=peak][name]${bb};`;
+  }
+  return s + ");out center qt;";
+}
+/* 端末への保存（IndexedDB）。使えない環境では何もしない */
+const idb = {
+  db: null,
+  async open(){
+    if (this.db !== null) return this.db;
+    this.db = await new Promise(res => {
+      try{ const r = indexedDB.open("tsugidoko", 1); r.onupgradeneeded = () => r.result.createObjectStore("tiles"); r.onsuccess = () => res(r.result); r.onerror = () => res(false); }
+      catch(e){ res(false); }
+    });
+    return this.db;
+  },
+  async getMany(keys){
+    const db = await this.open(); if (!db) return {};
+    return new Promise(res => {
+      const out = {}; let tx;
+      try{ tx = db.transaction("tiles", "readonly"); }catch(e){ res(out); return; }
+      const st = tx.objectStore("tiles");
+      for (const k of keys){ const q = st.get(TILE_VER + ":" + k); q.onsuccess = () => { if (q.result) out[k] = q.result; }; }
+      tx.oncomplete = () => res(out); tx.onerror = () => res(out); tx.onabort = () => res(out);
+    });
+  },
+  async putMany(obj){
+    const db = await this.open(); if (!db) return;
+    return new Promise(res => {
+      let tx; try{ tx = db.transaction("tiles", "readwrite"); }catch(e){ res(); return; }
+      const st = tx.objectStore("tiles"); for (const k in obj) st.put(obj[k], TILE_VER + ":" + k);
+      tx.oncomplete = () => res(); tx.onerror = () => res(); tx.onabort = () => res();
+    });
+  }
+};
+async function fetchTiles(keys, depth){
+  try{
+    const j = await overpass(tileQuery(keys));
+    const inKeys = new Set(keys), fresh = {}, now = Date.now(), seen = new Set();
+    for (const k of keys) fresh[k] = [];
+    for (const el of j.elements || []){
+      const e = slimEl(el); if (!e || seen.has(e.id)) continue; seen.add(e.id);
+      const k = tileKey(e.lat, e.lon); if (inKeys.has(k)) fresh[k].push(e);
+    }
+    const save = {};
+    for (const k of keys){ tileCache.set(k, fresh[k]); save[k] = { t: now, els: fresh[k] }; }
+    idb.putMany(save);
+    return 0;
+  }catch(e){
+    if (keys.length > 1 && depth < 2){
+      const h = Math.ceil(keys.length / 2);
+      return (await fetchTiles(keys.slice(0, h), depth + 1)) + (await fetchTiles(keys.slice(h), depth + 1));
+    }
+    return keys.length;
+  }
+}
+/* 足りないタイルだけを取る。戻り値は取れなかったタイルの数 */
+async function ensureTiles(keys, label){
+  let missing = [...keys].filter(k => !tileCache.has(k));
+  if (!missing.length) return 0;
+  const saved = await idb.getMany(missing), now = Date.now();
+  for (const k of missing){ const v = saved[k]; if (v && now - v.t < TILE_TTL) tileCache.set(k, v.els); }
+  missing = missing.filter(k => !tileCache.has(k)).sort(cmpTile);
+  if (!missing.length) return 0;
+  const n = Math.max(Math.min(2, missing.length), Math.ceil(missing.length / 30)), per = Math.ceil(missing.length / n);
+  const groups = []; for (let i = 0; i < missing.length; i += per) groups.push(missing.slice(i, i + per));
+  let failed = 0, done = 0;
+  if (label) status(`${label}（地図データ ${missing.length}区画）`);
+  await pool(groups, 2, async g => { failed += await fetchTiles(g, 0); done++; if (label && groups.length > 1) status(`${label} ${done}/${groups.length}`); });
+  return failed;
+}
+
+/* ===== 候補の分析と採点（確実に計算できる部分はここで計算する） ===== */
+function thin(coords, step){
+  const out = [{ lat: coords[0].lat, lon: coords[0].lon, d: 0 }]; let d = 0;
+  for (let i = 1; i < coords.length; i++){
+    d += hav(coords[i-1], coords[i]);
+    if (d - out[out.length-1].d >= step || i === coords.length - 1) out.push({ lat: coords[i].lat, lon: coords[i].lon, d });
+  }
+  return out;
+}
+const cellKey = p => `${Math.round(p.lat / 0.0003)}_${Math.round(p.lon / 0.00036)}`;
+function walkedCells(){
+  const set = new Set();
+  for (const lg of state.legs) for (const c of lg.coords) set.add(cellKey({ lat: c[0], lon: c[1] }));
+  return set;
+}
+function analyze(c, walked){
+  const grid = c.grid || thin(c.coords, 25); c.grid = grid;
+  const L = grid[grid.length - 1].d || 1;
+  let s = 90, n = -90, w = 180, e = -180;
+  for (const p of grid){ s = Math.min(s, p.lat); n = Math.max(n, p.lat); w = Math.min(w, p.lon); e = Math.max(e, p.lon); }
+  const mLat = CFG.corridorM / 111320, mLon = CFG.corridorM / (111320 * Math.cos((s + n) / 2 * toR));
+  const pois = [], seen = new Set();
+  for (const k of tileKeysFor(grid)){
+    for (const el of tileCache.get(k) || []){
+      if (!el.kind || seen.has(el.id)) continue; seen.add(el.id);
+      if (el.lat < s - mLat || el.lat > n + mLat || el.lon < w - mLon || el.lon > e + mLon) continue;
+      const cosl = Math.cos(el.lat * toR); let bd = Infinity, bi = 0;
+      for (let i = 0; i < grid.length; i++){
+        const dy = (grid[i].lat - el.lat) * 111320, dx = (grid[i].lon - el.lon) * 111320 * cosl, dd = dx*dx + dy*dy;
+        if (dd < bd){ bd = dd; bi = i; }
+      }
+      if (Math.sqrt(bd) <= CFG.corridorM) pois.push({ ...el, d: grid[bi].d });
+    }
+  }
+  pois.sort((a, b) => a.d - b.d);
+  c.pois = pois; c.L = L;
+  const cnt = k => pois.filter(p => p.kind === k).length;
+  c.konbini = cnt("konbini"); c.toilets = cnt("toilet"); c.water = cnt("water"); c.cafes = cnt("cafe");
+  const names = new Set();
+  c.sights = pois.filter(p => SIGHT.has(p.kind) && (!p.name || !names.has(p.name) && names.add(p.name)));
+  const sup = [0, ...pois.filter(p => SUPPLY.has(p.kind)).map(p => p.d), L].sort((a, b) => a - b);
+  let gap = 0; for (let i = 1; i < sup.length; i++) gap = Math.max(gap, sup[i] - sup[i-1]);
+  c.maxGapKm = gap / 1000;
+  const tail = grid.filter(p => p.d > 300);
+  c.overlap = tail.length ? tail.filter(p => walked.has(cellKey(p))).length / tail.length : 0;
+  c.score = codeScore(c);
+}
+function codeScore(c){
+  const P = state.prefs; let s = 0;
+  if (c.targetKm) s += 40 * Math.max(0, 1 - Math.abs(c.km - c.targetKm) / c.targetKm / CFG.tolerance);
+  s += Math.min(P.has("sights") ? 30 : 20, c.sights.length * (P.has("sights") ? 6 : 4));
+  s += Math.min(P.has("supply") ? 20 : 12, (c.konbini + c.toilets + c.water) * (P.has("supply") ? 5 : 3));
+  if (c.maxGapKm > 3) s -= (P.has("supply") ? 8 : 4) * (c.maxGapKm - 3);
+  if (c.road) s += (P.has("quiet") ? 20 : 10) * c.road.quiet - (P.has("quiet") ? 25 : 12) * c.road.busy;
+  s -= 30 * c.overlap;
+  if (c.type && c.type !== "point") s += 10;   // 名前のある行き先を、方角だけの地点より優先する
+  if (P.has("flat") && c.ascent != null) s -= Math.max(0, c.ascent / Math.max(0.5, c.km) - 10);
+  return Math.round(s);
+}
+async function finishAnalysis(cands, notes){
+  const keys = new Set();
+  for (const c of cands){ c.grid = thin(c.coords, 25); for (const k of tileKeysFor(c.grid)) keys.add(k); }
+  const failed = await ensureTiles(keys, "沿道のスポットを調べています");
+  if (failed) notes.push("一部の区間はスポットを取得できず、数が少なめに出ています");
+  const walked = walkedCells();
+  for (const c of cands) analyze(c, walked);
+}
+
+/* ===== Jev（Worker経由。質問文はWorker側で固定） ===== */
+async function jevRank(cands, targetKm){
+  const code = store.get(LS.code, "");
+  if (!code) throw new Error("合言葉が未設定です");
+  const body = {
+    code, target_km: targetKm || undefined, prefs: [...state.prefs],
+    candidates: cands.map(c => ({
+      name: c.variant ? `${c.name}（${c.variant}）` : c.name, type: c.type, km: +c.km.toFixed(2),
+      ascent: c.ascent == null ? null : Math.round(c.ascent),
+      konbini: c.konbini, toilets: c.toilets, water: c.water, cafes: c.cafes, maxGapKm: +c.maxGapKm.toFixed(2),
+      sights: c.sights.slice(0, 8).map(p => ({ name: p.name || p.label, type: p.kind })),
+      busy: c.road ? +c.road.busy.toFixed(2) : null, quiet: c.road ? +c.road.quiet.toFixed(2) : null,
+      overlap: +c.overlap.toFixed(2)
+    }))
+  };
+  // Content-Typeを付けない単純なPOSTにして、ブラウザの事前確認（preflight）を起こさない
+  const r = await fetchT(CFG.proxy + "/jev", { method: "POST", body: JSON.stringify(body) }, 30000);
+  const t = await r.text(); let j;
+  try{ j = JSON.parse(t); }catch(e){ throw new Error(`Workerの応答 ${r.status}`); }
+  if (!r.ok){
+    if (j.error === "invalid code") throw new Error("合言葉が違います");
+    if (j.error === "jev not configured") throw new Error("WorkerにTYPESAFE_API_KEYが未設定です");
+    throw new Error(`${j.error || "エラー"} ${j.status || r.status}`);
+  }
+  return j;
+}
+/* 採点で上位10件に絞り、Jevが使えればJevの確率で並べ替える */
+async function rank(cands, targetKm, notes){
+  const top = cands.slice().sort((a, b) => b.score - a.score).slice(0, 10);
+  if (top.length < 2 || !store.get(LS.jev, true) || !store.get(LS.code, "")) return { list: top, basis: top.length < 2 ? "" : "code" };
+  status("Jevで順番を決めています…");
+  try{
+    const j = await jevRank(top, targetKm);
+    top.forEach((c, i) => { c.jevP = Number(j.probabilities && j.probabilities[i]) || 0; });
+    top.sort((a, b) => b.jevP - a.jevP || b.score - a.score);
+    return { list: top, basis: "jev" };
+  }catch(e){
+    notes.push(`Jevを使えなかったため、アプリ内の採点で並べました（${e.message}）`);
+    return { list: top, basis: "code" };
+  }
+}
+
+/* ===== 1段目：行き先の候補（OSRMで速く） ===== */
+function cur(){
+  if (state.legs.length){ const lg = state.legs[state.legs.length - 1]; return { ...lg.to, name: lg.name }; }
+  return state.start;
+}
+function visitedNames(){
+  const s = new Set(); if (state.start) s.add(state.start.name);
+  for (const lg of state.legs) s.add(lg.name);
+  return s;
+}
+function prefBoost(a){
+  let b = 0;
+  if (state.prefs.has("sights") && SIGHT.has(a.type)) b += 1;
+  if (state.prefs.has("flat") && a.type === "peak") b -= 2;
+  return b;
+}
+function readDist(){ const v = Number($("#dist").value); return v >= 0.5 && v <= 20 ? v : null; }
+function setBusy(b){
+  state.busy = b;
+  for (const id of ["btnFind","btnFinish","btnUndo","btnReset","btnSearch","btnBack"]) $("#" + id).disabled = b;
+  if (!b) $("#btnUndo").disabled = !state.legs.length;
+}
+function destCand(from, t, r, targetKm){
+  const end = r.coords[r.coords.length - 1], brg = bearing(from, end);
+  return {
+    name: t.name || `${dirName(brg)}へ約${r.km.toFixed(1)}km`, type: t.type, typeLabel: t.label || TYPE_LABEL[t.type],
+    dir: dirName(brg), to: { lat: end.lat, lon: end.lon }, target: { lat: t.lat, lon: t.lon },
+    coords: r.coords, km: r.km, ascent: r.ascent, road: r.road, engine: r.engine, targetKm
+  };
+}
+
+async function findCandidates(){
+  const from = cur(); const D = readDist();
+  if (!from) return;
+  if (!D){ status("距離は0.5〜20kmで入れてください", true); return; }
+  store.set(LS.dist, D);
+  setBusy(true); clearCands(); state.prevList = null;
+  const notes = [];
+  try{
+    const ringM = D * 1000 / state.detour;
+    const R = Math.min(1000, Math.max(300, ringM * 0.3));
+    const pts = Array.from({ length: CFG.sectors }, (_, i) => { const brg = i * 360 / CFG.sectors; return { brg, ...dest(from, brg, ringM) }; });
+
+    // 行き先の元（駅・公園・寺社など）：8方向の円にかかるタイルだけを取る
+    const keys = new Set(); for (const p of pts) for (const k of tileKeysForCircle(p, R)) keys.add(k);
+    const f1 = await ensureTiles(keys, "行き先になりそうな場所を探しています");
+    if (f1) notes.push("一部の方角は行き先の名前を取得できませんでした");
+    const visited = visitedNames(), byName = new Map();
+    for (const k of keys) for (const el of tileCache.get(k) || []){
+      if (!el.a || visited.has(el.a.name)) continue;
+      let si = -1, sd = Infinity; pts.forEach((p, i) => { const d = hav(el, p); if (d < sd){ sd = d; si = i; } });
+      if (sd > R || hav(el, from) < ringM * 0.45) continue;
+      const a = { ...el.a, lat: el.lat, lon: el.lon, sector: si, fit: el.a.w - 2 * sd / R + prefBoost(el.a) };
+      const o = byName.get(a.name); if (!o || o.fit < a.fit) byName.set(a.name, a);
+    }
+    const shortlist = [];
+    for (let i = 0; i < pts.length; i++){
+      shortlist.push(...[...byName.values()].filter(a => a.sector === i).sort((x, y) => y.fit - x.fit).slice(0, CFG.perSector));
+      shortlist.push({ lat: pts[i].lat, lon: pts[i].lon, name: null, type: "point", label: TYPE_LABEL.point, sector: i, fit: -9 });
+    }
+
+    // 道のり：OSRMのtableで全件を1回で測る。だめなら方角ごとに1〜2件だけrouteで測る
+    status(`道のりを測っています（${shortlist.length}か所）`);
+    try{ const ds = await osrmTable(from, shortlist); shortlist.forEach((a, i) => { a.m = ds[i]; }); }
+    catch(e){
+      notes.push(`まとめて測れなかったため、方角ごとに測りました（${e.message}）`);
+      const sub = [];
+      for (let i = 0; i < pts.length; i++){ const l = shortlist.filter(a => a.sector === i); sub.push(l[0]); if (l.length > 1) sub.push(l[l.length - 1]); }
+      await pool(sub, 4, async a => { const r = await osrmRoute(from, a); a.m = r.km * 1000; a.route = r; });
+    }
+    const ratios = shortlist.filter(a => a.m > 0).map(a => a.m / Math.max(50, hav(from, a)));
+    if (ratios.length){ state.detour = Math.min(1.8, Math.max(1.1, median(ratios))); store.set(LS.detour, state.detour); }
+
+    // 方角ごとに、距離が合って名前のある行き先を1つ選ぶ
+    const cost = a => Math.abs(a.m / 1000 - D) / D / CFG.tolerance + (a.type === "point" ? 1 : 0) - 0.1 * a.fit;
+    let picks = [];
+    for (let i = 0; i < pts.length; i++){
+      const l = shortlist.filter(a => a.sector === i && a.m > 0 && Math.abs(a.m / 1000 - D) / D <= CFG.dropAt).sort((x, y) => cost(x) - cost(y));
+      if (l[0] && !picks.some(p => (p.name && p.name === l[0].name) || hav(p, l[0]) < 250)) picks.push(l[0]);
+    }
+    if (!picks.length){ status(`${D}km前後になる行き先が見つかりませんでした。距離を変えるか、場所の名前で行き先を指定してください。`, true); return; }
+
+    status(`道のりを引いています（${picks.length}件）`);
+    const res = await pool(picks, 4, async a => a.route || await osrmRoute(from, a));
+    const cands = [];
+    res.forEach((r, i) => { if (r && !r.error) cands.push(destCand(from, picks[i], r, D)); });
+    if (!cands.length){ status("道のりを計算できませんでした。少し時間をおいてもう一度試してください。", true); return; }
+
+    await finishAnalysis(cands, notes);
+    const rk = await rank(cands, D, notes);
+    showCands(rk.list.slice(0, CFG.showTop), "dest", notes, rk.basis);
+  }catch(e){
+    status(`候補を作れませんでした（${e.message}）`, true);
+  }finally{ setBusy(false); }
+}
+
+/* 駅・自宅で終える（これも1段目。決めたら2段目で道順を選ぶ） */
+async function findFinish(){
+  const from = cur(); if (!from) return;
+  setBusy(true); clearCands(); state.prevList = null;
+  const notes = [];
+  try{
+    status("近くの駅を探しています…");
+    let stations = [];
+    try{
+      const j = await overpass(`[out:json][timeout:25];nwr[railway=station][name](around:${CFG.finishStationM},${from.lat.toFixed(5)},${from.lon.toFixed(5)});out center qt;`);
+      const byName = new Map();
+      for (const el of j.elements || []){
+        const e = slimEl(el); if (!e || !e.a || e.a.type !== "station") continue;
+        const d = hav(from, e); if (!byName.has(e.a.name) || byName.get(e.a.name).d > d) byName.set(e.a.name, { ...e.a, lat: e.lat, lon: e.lon, d });
+      }
+      stations = [...byName.values()].sort((a, b) => a.d - b.d).slice(0, 3);
+    }catch(e){ notes.push(`駅を取得できませんでした（${e.message}）`); }
+    const targets = [...stations];
+    const home = store.get(LS.home, null);
+    if (home && hav(from, home) < 30000) targets.unshift({ ...home, name: "自宅", type: "home", label: "自宅" });
+    if (!targets.length){ status(`${CFG.finishStationM/1000}km以内に駅が見つからず、自宅も未設定です。設定で自宅を登録できます。`, true); return; }
+    status(`道のりを引いています（${targets.length}件）`);
+    const res = await pool(targets, 4, t => osrmRoute(from, t));
+    const cands = [];
+    res.forEach((r, i) => { if (r && !r.error) cands.push(destCand(from, targets[i], r, null)); });
+    if (!cands.length){ status("道のりを計算できませんでした。少し時間をおいてもう一度試してください。", true); return; }
+    await finishAnalysis(cands, notes);
+    cands.sort((a, b) => a.km - b.km);
+    showCands(cands, "finish", notes, "near");
+  }catch(e){ status(`候補を作れませんでした（${e.message}）`, true); }
+  finally{ setBusy(false); }
+}
+
+/* ===== 2段目：行き先を決めたあと、BRouterで道順の候補を出す ===== */
+function overlapShare(a, b){ let n = 0; for (const k of a) if (b.has(k)) n++; return a.size ? n / a.size : 0; }
+async function planRoutes(dc, fromList){
+  const from = cur(); if (!from) return;
+  if (fromList) state.prevList = { cands: state.cands, mode: state.mode, basis: state.basis, head: $("#status").textContent };
+  setBusy(true);
+  const notes = [];
+  try{
+    const target = dc.target || dc.to;
+    const jobs = Array.from({ length: CFG.brouterAlts }, (_, i) => () => brouter(from, target, i));
+    if (!dc.coords) jobs.push(() => osrmRoute(from, target));
+    status(`${dc.name}までの道順を計算しています…`);
+    const res = await pool(jobs, 2, job => job());
+    const routes = res.filter(r => r && !r.error);
+    const bErr = res.find((r, i) => i < CFG.brouterAlts && r && r.error);
+    if (bErr) notes.push(`BRouterで計算できない案がありました（${bErr.error.message}）`);
+    if (dc.coords) routes.push({ coords: dc.coords, km: dc.km, ascent: dc.ascent, road: dc.road, engine: "osrm" });
+    const kept = [];
+    for (const r of routes){
+      r.cells = new Set(thin(r.coords, 25).map(cellKey));
+      if (kept.some(k => overlapShare(r.cells, k.cells) > 0.85)) continue;   // ほぼ同じ道は1つにまとめる
+      kept.push(r);
+    }
+    if (!kept.length){ status("道順を計算できませんでした。少し時間をおいてもう一度試してください。", true); return; }
+    const cands = kept.map(r => ({
+      name: dc.name, type: dc.type, typeLabel: dc.typeLabel, dir: dc.dir, to: dc.to,
+      coords: r.coords, km: r.km, ascent: r.ascent, road: r.road, targetKm: dc.targetKm,
+      variant: r.engine === "osrm" ? "最短寄り（OSRM）" : `BRouter 案${r.alt + 1}`
+    }));
+    await finishAnalysis(cands, notes);
+    const rk = await rank(cands, dc.targetKm, notes);
+    showCands(rk.list, "route", notes, rk.basis);
+  }catch(e){ status(`道順を計算できませんでした（${e.message}）`, true); }
+  finally{ setBusy(false); }
+}
+
+/* ===== 地図 ===== */
+const map = L.map("map", { zoomControl: true, attributionControl: true }).setView([35.5076, 139.6176], 14);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors" }).addTo(map);
+const layLegs = L.layerGroup().addTo(map), layCands = L.layerGroup().addTo(map), layPoi = L.layerGroup().addTo(map), layMark = L.layerGroup().addTo(map);
+
+function drawPlan(){
+  layLegs.clearLayers(); layMark.clearLayers();
+  if (!state.start) return;
+  for (const lg of state.legs) L.polyline(lg.coords.map(c => [c[0], c[1]]), { color: "#1E2B24", weight: 5, opacity: .85 }).addTo(layLegs);
+  L.marker([state.start.lat, state.start.lon], { icon: L.divIcon({ className: "", html: '<div class="legend-num">S</div>', iconSize: [22, 22] }) })
+    .bindTooltip(esc(state.start.name)).addTo(layMark);
+  state.legs.forEach((lg, i) => {
+    L.marker([lg.to.lat, lg.to.lon], { icon: L.divIcon({ className: "", html: `<div class="legend-num">${i + 1}</div>`, iconSize: [22, 22] }) })
+      .bindTooltip(esc(lg.name)).addTo(layMark);
+  });
+  const c = cur();
+  L.marker([c.lat, c.lon], { icon: L.divIcon({ className: "", html: '<div class="pin"></div>', iconSize: [18, 18] }), zIndexOffset: 500 }).addTo(layMark);
+}
+function drawCands(){
+  layCands.clearLayers(); layPoi.clearLayers();
+  state.cands.forEach((c, i) => {
+    const sel = i === state.sel;
+    const pl = L.polyline(c.coords.map(p => [p.lat, p.lon]), {
+      color: c.color, weight: sel ? 7 : 4, opacity: state.sel < 0 || sel ? .95 : .35,
+      dashArray: state.mode === "route" || sel ? null : "8 6"   // 行き先の段階の線は概算なので点線
+    });
+    pl.on("click", () => selectCand(i, true)); pl.addTo(layCands);
+    if (sel) pl.bringToFront();
+  });
+  const c = state.cands[state.sel];
+  if (c) for (const p of c.pois){
+    L.marker([p.lat, p.lon], { icon: L.divIcon({ className: "poi", html: POI_ICON[p.kind], iconSize: [18, 18] }) })
+      .bindPopup(`<b>${esc(p.name || p.label)}</b><br>${esc(p.label)}　${(p.d / 1000).toFixed(1)}km地点`).addTo(layPoi);
+  }
+}
+function fitCands(){
+  const pts = []; for (const c of state.cands) for (const p of c.grid) pts.push([p.lat, p.lon]);
+  const k = cur(); if (k) pts.push([k.lat, k.lon]);
+  if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [24, 24] });
+}
+map.on("click", (e) => {
+  if (state.busy) return;
+  const p = { lat: e.latlng.lat, lon: e.latlng.lng };
+  if (!state.start){ setStart(p, null); return; }
+  const box = document.createElement("div");
+  box.innerHTML = `<div class="row"><button class="primary" data-a="go">ここへ行く</button><button data-a="home">ここを自宅にする</button></div>`;
+  const pop = L.popup().setLatLng(e.latlng).setContent(box).openOn(map);
+  box.addEventListener("click", async (ev) => {
+    const a = ev.target.dataset.a; if (!a) return; map.closePopup(pop);
+    if (a === "home"){ setHome(p); return; }
+    goTo(p, await placeName(p) || "地図で選んだ場所");
+  });
+});
+function goTo(p, name){
+  const from = cur(); if (!from) return;
+  clearCands(); state.prevList = null;
+  planRoutes({ name, type: "custom", typeLabel: TYPE_LABEL.custom, dir: dirName(bearing(from, p)), to: p, target: p, targetKm: null }, false);
+}
+
+/* ===== 画面 ===== */
+function clearCands(){ state.cands = []; state.sel = -1; $("#cands").innerHTML = ""; $("#backBar").hidden = true; drawCands(); }
+function showCands(cands, mode, notes, basis, head){
+  cands.forEach((c, i) => { c.color = COLORS[i % COLORS.length]; });
+  state.cands = cands; state.mode = mode; state.sel = 0; state.basis = basis;
+  const order = basis === "jev" ? "Jevが決めた順" : basis === "code" ? "アプリ内の採点順" : "";
+  const h = head || (
+    mode === "dest"   ? `行き先の候補（${order}）。距離はOSRMでの概算で、決めたあとに道順を選びます` :
+    mode === "finish" ? "駅・自宅の候補（近い順）。決めたあとに道順を選びます" :
+    mode === "route"  ? (cands.length > 1 ? `道順の候補（${order}）` : "道順（ほかの案は同じ道になったためまとめました）") : "");
+  status([h, ...notes].join("。"));
+  $("#backBar").hidden = !(mode === "route" && state.prevList);
+  renderCards(); drawCands(); fitCands();
+}
+function strip(c){
+  let h = "";
+  for (const p of c.pois){
+    const x = Math.min(98, Math.max(2, p.d / c.L * 100));
+    if (SIGHT.has(p.kind)) h += `<span class="up" style="left:${x}%">${POI_ICON[p.kind]}</span>`;
+    else if (p.kind !== "cafe") h += `<span class="dn" style="left:${x}%">${POI_ICON[p.kind]}</span>`;
+  }
+  return `<div class="strip" aria-hidden="true">${h}</div>`;
+}
+function renderCards(){
+  const route = state.mode === "route";
+  $("#cands").innerHTML = state.cands.map((c, i) => {
+    const sights = c.sights.filter(p => p.name).slice(0, 5).map(p => `${POI_ICON[p.kind]} ${esc(p.name)}`).join("、");
+    const basis = c.jevP != null && state.basis === "jev" ? `Jev ${pct(c.jevP)}` : state.basis === "code" ? `採点 ${c.score}` : "";
+    const target = c.targetKm ? `目標 ${c.targetKm} km` : "km";
+    const sub = [
+      `<span>補給なしの最長 ${c.maxGapKm.toFixed(1)} km</span>`,
+      c.road ? `<span>大通り ${pct(c.road.busy)}</span><span>静かな道 ${pct(c.road.quiet)}</span>` : "",
+      c.road && c.road.unpaved > 0.05 ? `<span>未舗装 ${pct(c.road.unpaved)}</span>` : "",
+      c.overlap > 0.05 ? `<span>歩いた道と重なる ${pct(c.overlap)}</span>` : ""
+    ].join("");
+    const small = route ? `${esc(c.variant || "")}` : `${esc(c.typeLabel || "")}　${esc(c.dir)}方向`;
+    return `<article class="cand${i === state.sel ? " sel" : ""}" style="--c:${c.color}" data-i="${i}">
+      <header>
+        <span class="rank">${state.cands.length > 1 ? i + 1 : ""}</span>
+        <div class="dest"><b>${esc(c.name)}</b><small>${small}</small></div>
+        <div class="km"><b>${c.km.toFixed(1)}</b><small>${target}</small></div>
+      </header>
+      ${strip(c)}
+      <p class="facts"><span>コンビニ ${c.konbini}</span><span>トイレ ${c.toilets}</span><span>見どころ ${c.sights.length}</span>${c.ascent != null ? `<span>登り ${Math.round(c.ascent)} m</span>` : ""}</p>
+      <p class="sub">${sub}</p>
+      ${sights ? `<p class="sights">${sights}</p>` : ""}
+      <footer><span class="basis">${basis}</span><button class="adopt" data-adopt="${i}">${route ? "この道にする" : "ここに決める"}</button></footer>
+    </article>`;
+  }).join("");
+}
+function selectCand(i, scroll){
+  state.sel = i;
+  document.querySelectorAll(".cand").forEach(el => el.classList.toggle("sel", Number(el.dataset.i) === i));
+  drawCands();
+  if (scroll){ const el = document.querySelector(`.cand[data-i="${i}"]`); if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+}
+$("#cands").addEventListener("click", (e) => {
+  if (state.busy) return;
+  const ad = e.target.closest("[data-adopt]");
+  if (ad){
+    const c = state.cands[Number(ad.dataset.adopt)];
+    if (state.mode === "route") adopt(c); else planRoutes(c, true);
+    return;
+  }
+  const card = e.target.closest(".cand");
+  if (card){ selectCand(Number(card.dataset.i), false); const c = state.cands[state.sel];
+    map.fitBounds(L.latLngBounds(c.grid.map(p => [p.lat, p.lon])), { padding: [24, 24] }); }
+});
+$("#btnBack").onclick = () => {
+  const p = state.prevList; if (!p) return;
+  state.prevList = null; showCands(p.cands, p.mode, [], p.basis, p.head);
+};
+function adopt(c){
+  if (!c) return;
+  state.legs.push({ to: c.to, name: c.name, type: c.type, km: c.km, ascent: c.ascent,
+    coords: c.coords.map(p => [+p.lat.toFixed(6), +p.lon.toFixed(6), p.ele == null ? null : Math.round(p.ele * 10) / 10]) });
+  state.prevList = null;
+  savePlan(); clearCands(); render();
+  status(c.type === "home" || c.type === "station" ? `${c.name}まで決まりました。GPXで保存できます。` : `${c.name}まで決まりました。次に歩く距離を決めて、候補を探してください。`);
+  const k = cur(); map.panTo([k.lat, k.lon]);
+}
+function render(){
+  const has = !!state.start;
+  $("#startBox").hidden = has; $("#planBox").hidden = !has; $("#legsBox").hidden = !has;
+  const home = store.get(LS.home, null);
+  $("#btnHomeStart").hidden = !home;
+  $("#homeNote").textContent = home ? `自宅：登録済み（${home.lat.toFixed(4)}, ${home.lon.toFixed(4)}）` : "自宅：未登録";
+  if (has){
+    const k = cur(), tot = state.legs.reduce((s, l) => s + l.km, 0), asc = state.legs.reduce((s, l) => s + (l.ascent || 0), 0);
+    $("#whereTitle").innerHTML = `${esc(k.name)} から、次はどこへ` +
+      (state.legs.length ? `<small>これまで <span class="num">${tot.toFixed(1)}</span> km、${state.legs.length}区間、登り ${Math.round(asc)} m</small>` : `<small>ここが起点です</small>`);
+    let prev = state.start.name;
+    $("#legs").innerHTML = state.legs.map(l => { const h = `<li><span>${esc(prev)} から ${esc(l.name)}</span><b>${l.km.toFixed(1)} km</b></li>`; prev = l.name; return h; }).join("")
+      || `<li><span>まだ区間はありません</span></li>`;
+  }
+  document.querySelectorAll("#prefChips .chip").forEach(b => b.setAttribute("aria-pressed", state.prefs.has(b.dataset.pref)));
+  $("#btnUndo").disabled = state.busy || !state.legs.length;
+  drawPlan();
+}
+
+/* ===== 起点・自宅・保存 ===== */
+async function placeName(p){
+  try{
+    const r = await fetchT(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&accept-language=ja&lat=${p.lat}&lon=${p.lon}`, {}, 10000);
+    if (!r.ok) return null;
+    const j = await r.json(), a = j.address || {};
+    return j.name || a.neighbourhood || a.quarter || a.suburb || a.city_district || a.town || a.city || null;
+  }catch(e){ return null; }
+}
+async function setStart(p, name){
+  state.start = { lat: p.lat, lon: p.lon, name: name || "起点" };
+  state.legs = []; state.prevList = null; clearCands(); savePlan(); render();
+  map.setView([p.lat, p.lon], Math.max(map.getZoom(), 14));
+  status("次に歩く距離を決めて、候補を探してください。");
+  if (!name){ const n = await placeName(p); if (n && state.start && state.start.lat === p.lat){ state.start.name = n; savePlan(); render(); } }
+}
+function setHome(p){ store.set(LS.home, { lat: p.lat, lon: p.lon }); render(); status("自宅を登録しました。「駅・自宅で終える」の候補に出ます。"); }
+function savePlan(){ store.set(LS.plan, { v: 1, start: state.start, legs: state.legs }); }
+function loadPlan(){
+  const p = store.get(LS.plan, null);
+  if (p && p.v === 1 && p.start){ state.start = p.start; state.legs = Array.isArray(p.legs) ? p.legs : []; }
+}
+function exportGpx(){
+  if (!state.legs.length){ status("まだ区間がありません", true); return; }
+  const x = s => esc(s);
+  let trk = "", wpt = `<wpt lat="${state.start.lat}" lon="${state.start.lon}"><name>${x(state.start.name)}</name></wpt>\n`;
+  for (const lg of state.legs){
+    for (const c of lg.coords) trk += `<trkpt lat="${c[0]}" lon="${c[1]}">${c[2] != null ? `<ele>${c[2]}</ele>` : ""}</trkpt>\n`;
+    wpt += `<wpt lat="${lg.to.lat}" lon="${lg.to.lon}"><name>${x(lg.name)}</name></wpt>\n`;
+  }
+  const title = `${state.start.name} から ${state.legs[state.legs.length - 1].name}`;
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="次どこウォーカー" xmlns="http://www.topografix.com/GPX/1/1">\n${wpt}<trk><name>${x(title)}</name><trkseg>\n${trk}</trkseg></trk>\n</gpx>\n`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([gpx], { type: "application/gpx+xml" }));
+  a.download = `tsugidoko-${new Date().toISOString().slice(0, 10)}.gpx`;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+
+/* ===== 場所の検索 ===== */
+async function search(){
+  const q = $("#q").value.trim(); if (!q) return;
+  $("#results").innerHTML = ""; status("探しています…");
+  try{
+    const r = await fetchT(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=jp&accept-language=ja&q=${encodeURIComponent(q)}`, {}, 15000);
+    const j = r.ok ? await r.json() : [];
+    if (!j.length){ status(`「${q}」は見つかりませんでした。別の呼び方で試してください。`, true); return; }
+    status(state.start ? "行き先を選んでください" : "起点を選んでください");
+    $("#results").innerHTML = j.map((x, i) => {
+      const parts = String(x.display_name).split(",").map(s => s.trim());
+      return `<button data-r="${i}"><b>${esc(x.name || parts[0])}</b><br><small>${esc(parts.slice(1, 4).join(" "))}</small></button>`;
+    }).join("");
+    $("#results").onclick = (e) => {
+      const b = e.target.closest("[data-r]"); if (!b || state.busy) return;
+      const x = j[Number(b.dataset.r)], p = { lat: Number(x.lat), lon: Number(x.lon) }, name = x.name || String(x.display_name).split(",")[0];
+      $("#results").innerHTML = ""; $("#q").value = "";
+      if (!state.start) setStart(p, name); else goTo(p, name);
+    };
+  }catch(e){ status(`検索できませんでした（${e.message}）`, true); }
+}
+
+/* ===== 操作 ===== */
+$("#btnHere").onclick = () => {
+  if (!navigator.geolocation){ status("この端末では現在地を取れません。地図をタップしてください。", true); return; }
+  status("現在地を取得しています…");
+  navigator.geolocation.getCurrentPosition(
+    pos => setStart({ lat: pos.coords.latitude, lon: pos.coords.longitude }, null),
+    () => status("現在地を取得できませんでした。位置情報の許可を確認するか、地図をタップしてください。", true),
+    { enableHighAccuracy: true, timeout: 15000 });
+};
+$("#btnHomeStart").onclick = () => { const h = store.get(LS.home, null); if (h) setStart(h, "自宅"); };
+$("#btnFind").onclick = findCandidates;
+$("#btnFinish").onclick = findFinish;
+$("#btnSearch").onclick = search;
+$("#q").addEventListener("keydown", e => { if (e.key === "Enter") search(); });
+$("#distChips").onclick = (e) => { const b = e.target.closest("[data-km]"); if (b){ $("#dist").value = b.dataset.km; store.set(LS.dist, Number(b.dataset.km)); } };
+$("#prefChips").onclick = (e) => {
+  const b = e.target.closest("[data-pref]"); if (!b) return;
+  const k = b.dataset.pref; state.prefs.has(k) ? state.prefs.delete(k) : state.prefs.add(k);
+  store.set(LS.prefs, [...state.prefs]); render();
+};
+$("#btnUndo").onclick = () => { if (!state.legs.length) return; const lg = state.legs.pop(); state.prevList = null; savePlan(); clearCands(); render(); status(`${lg.name}までの区間を取り消しました`); };
+$("#btnReset").onclick = () => {
+  if (!confirm("起点と区間をすべて消して、最初からにしますか？")) return;
+  state.start = null; state.legs = []; state.prevList = null; clearCands(); store.del(LS.plan); render(); status("");
+};
+$("#btnGpx").onclick = exportGpx;
+$("#btnCode").onclick = () => { const v = $("#code").value.trim(); if (v) store.set(LS.code, v); else store.del(LS.code); status(v ? "合言葉を保存しました" : "合言葉を消しました"); };
+$("#useJev").onchange = (e) => store.set(LS.jev, e.target.checked);
+$("#btnSetHome").onclick = () => { const k = cur(); if (k) setHome(k); else { const c = map.getCenter(); setHome({ lat: c.lat, lon: c.lng }); } };
+$("#btnClearHome").onclick = () => { store.del(LS.home); render(); status("自宅の登録を消しました"); };
+$("#btnProxy").onclick = () => { const v = $("#proxy").value.trim().replace(/\/+$/, ""); CFG.proxy = v; store.set(LS.proxy, v); status(v ? "中継用URLを保存しました" : "中継なしにしました"); };
+
+/* ===== 起動 ===== */
+$("#ver").textContent = `次どこウォーカー v${APP_VERSION}`;
+$("#dist").value = store.get(LS.dist, 5);
+$("#code").value = store.get(LS.code, "");
+$("#useJev").checked = store.get(LS.jev, true);
+$("#proxy").value = CFG.proxy;
+loadPlan(); render();
+if (state.start){ const k = cur(); map.setView([k.lat, k.lon], 14); status("続きから始めます。次に歩く距離を決めて、候補を探してください。"); }
+</script>
+</body>
+</html>
