@@ -309,6 +309,10 @@ const CFG = {
   expStorage: "routePreviewWalker.expander",
   mainStorage: "routePreviewWalker.main",
   poiRadiusM: 200,      // 経路から何m以内のスポットを取るか
+  poiChunkM: 2500,      // スポット検索1回あたりの経路の長さ（短いほどサーバー負荷が軽い）
+  paceKmh: 5,           // 所要時間の目安に使う歩く速さ
+  areaStepM: 500,       // 地名を調べる間隔
+  areaAheadM: 2000,     // 地名を先に調べておく距離
   aheadM: 3000,         // 「この先のスポット」に出す範囲
   guideLeadM: 150,      // スポットの何m手前で案内するか
   turnLeadM: 60,        // 曲がり角の何m手前で案内するか
@@ -1064,33 +1068,43 @@ function simplify(pts, tol){
   return pts.filter((_, i) => keep[i]);
 }
 
-function overpassQuery(chunk, R){
-  const A = `(around:${R},${chunk.map(p => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join(",")})`;
-  return `[out:json][timeout:90];(` +
-    `nwr[amenity~"^(toilets|drinking_water|cafe|place_of_worship)$"]${A};` +
-    `nwr[shop=convenience]${A};` +
-    `nwr[tourism~"^(viewpoint|attraction|museum)$"]${A};` +
-    `nwr[historic][name]${A};` +
+/* 経路を短い区間に分け、区間ごとの四角い範囲（bbox）で検索する。
+   線に沿った検索（around）より格段に軽く、公開サーバーのタイムアウト（504）を避けやすい。
+   範囲内で拾ったものは、後で経路からの距離で絞り込む。 */
+function bboxQuery(chunk, R){
+  let s = 90, w = 180, n = -90, e = -180;
+  for (const p of chunk){ s = Math.min(s, p.lat); n = Math.max(n, p.lat); w = Math.min(w, p.lon); e = Math.max(e, p.lon); }
+  const dLat = R / 111000, dLon = R / (111000 * Math.cos(((s + n) / 2) * toR));
+  const bb = `(${(s - dLat).toFixed(5)},${(w - dLon).toFixed(5)},${(n + dLat).toFixed(5)},${(e + dLon).toFixed(5)})`;
+  return `[out:json][timeout:25];(` +
+    `nwr[amenity~"^(toilets|drinking_water|cafe|place_of_worship)$"]${bb};` +
+    `nwr[shop=convenience]${bb};` +
+    `nwr[tourism~"^(viewpoint|attraction|museum)$"]${bb};` +
+    `nwr[historic][name]${bb};` +
     `);out center tags;`;
 }
+const OVERPASS_SERVERS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter"   // 有志の公開ミラー（稼働状況は保証されない）
+];
 async function overpassFetch(q){
   const body = "data=" + encodeURIComponent(q);
   const opts = { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body };
   const errs = [];
-  try{
-    const r = await fetch("https://overpass-api.de/api/interpreter", opts);
-    if (r.ok) return await r.json();
-    errs.push(`直接 ${r.status}`);
-  }catch(e){ errs.push(`直接 ${e.message}`); }
+  const targets = OVERPASS_SERVERS.map(u => ({ u, label: new URL(u).hostname }));
   const px = proxyBase();
-  if (px){
-    try{
-      const r = await fetch(px + "/overpass", opts);
-      if (r.ok) return await r.json();
-      errs.push(`中継 ${r.status}`);
-    }catch(e){ errs.push(`中継 ${e.message}`); }
+  if (px) targets.push({ u: px + "/overpass", label: "中継" });
+  for (let attempt = 0; attempt < 2; attempt++){
+    for (const t of targets){
+      try{
+        const r = await fetch(t.u, opts);
+        if (r.ok) return await r.json();
+        errs.push(`${t.label} ${r.status}`);
+      }catch(e){ errs.push(`${t.label} ${e.message}`); }
+    }
+    await new Promise(r => setTimeout(r, 3000));   // 混雑時は少し待ってからもう一巡
   }
-  throw new Error(errs.join(" / "));
+  throw new Error(errs.slice(-3).join(" / "));
 }
 
 /* 経路上の位置（距離d・左右・離れ具合）を付ける */
@@ -1112,34 +1126,41 @@ async function fetchSpots(){
   const tok = ++state.poiTok;
   const st = $("#poiStatus");
   state.pois = []; for (const k in poiLayers) poiLayers[k].clearLayers();
-  const simp = simplify(state.grid, 25);
+  const g = state.grid, total = g[g.length - 1].d;
   const chunks = [];
-  for (let i = 0; i < simp.length - 1; i += 119) chunks.push(simp.slice(i, i + 120));
+  for (let d0 = 0; d0 < total; d0 += CFG.poiChunkM){
+    const part = g.filter(p => p.d >= d0 && p.d <= d0 + CFG.poiChunkM + 20);
+    if (part.length) chunks.push(part);
+  }
+  // 今いる地点に近い区間から順に取る
+  const cur = state.pts.length ? state.pts[state.i].d : 0;
+  const order = chunks.map((c, i) => i).sort((x, y) => Math.abs(x * CFG.poiChunkM - cur) - Math.abs(y * CFG.poiChunkM - cur));
   const seen = new Set();
-  for (let c = 0; c < chunks.length; c++){
-    st.textContent = `スポットを取得中… ${c + 1}/${chunks.length}`;
+  let failed = 0, lastErr = "";
+  for (let n = 0; n < order.length; n++){
+    st.textContent = `スポットを取得中… ${n + 1}/${order.length}${failed ? `（失敗 ${failed}）` : ""}`;
     let j;
-    try{ j = await overpassFetch(overpassQuery(chunks[c], CFG.poiRadiusM)); }
-    catch(e){ if (tok === state.poiTok) st.textContent = `スポットを取得できませんでした（${e.message}）`; return; }
+    try{ j = await overpassFetch(bboxQuery(chunks[order[n]], CFG.poiRadiusM)); }
+    catch(e){ failed++; lastErr = e.message; if (tok !== state.poiTok) return; continue; }
     if (tok !== state.poiTok) return;
     for (const el of j.elements || []){
-      const key = el.type + el.id; if (seen.has(key)) continue; seen.add(key);
+      const key = el.type + el.id; if (seen.has(key)) continue;
       const lat = el.lat != null ? el.lat : el.center && el.center.lat;
       const lon = el.lon != null ? el.lon : el.center && el.center.lon;
       const tags = el.tags || {}; const cat = poiCat(tags);
       if (lat == null || !cat) continue;
       const p = { id: key, lat, lon, tags, cat };
       placeOnRoute(p);
-      if (p.offset > CFG.poiRadiusM + 30) continue;
+      if (p.offset > CFG.poiRadiusM) continue;
+      seen.add(key);
       state.pois.push(p); addSpotMarker(p);
     }
-    if (c < chunks.length - 1) await new Promise(r => setTimeout(r, 1100));   // 公開サーバーへの配慮
+    state.pois.sort((a, b) => a.d - b.d);
+    buildEvents(); renderAhead();
+    if (n < order.length - 1) await new Promise(r => setTimeout(r, 1200));   // 公開サーバーへの配慮
   }
-  state.pois.sort((a, b) => a.d - b.d);
   const counts = Object.keys(POI_CATS).map(k => `${POI_CATS[k].emoji}${state.pois.filter(p => p.cat === k).length}`).join(" ");
-  st.textContent = `経路から${CFG.poiRadiusM}m以内：${counts}（© OpenStreetMap contributors）`;
-  buildEvents();
-  renderAhead();
+  st.textContent = `経路から${CFG.poiRadiusM}m以内：${counts}` + (failed ? `／${failed}区間は取得失敗（${lastErr}）` : "") + "（© OpenStreetMap contributors）";
 }
 
 function addSpotMarker(p){
@@ -1196,6 +1217,7 @@ function syncLayers(){ for (const k in POI_CATS){ if (POI_CATS[k].on) poiLayers[
 function onNewRoute(){
   state.grid = resample(state.raw, state.rawCum, 20);
   state.events = []; state.aiWin.clear(); caption("");
+  state.areas.clear(); state.lastArea = null;
   buildEvents();              // スポットなしでも曲がり角・坂・距離の案内は先に作る
   fetchSpots();
 }
@@ -1208,13 +1230,13 @@ function buildEvents(){
   const total = g[g.length - 1].d, ev = [];
   ev.push({ id: "start", type: "start", d: 0 });
   for (const p of state.pois) ev.push({ id: "p" + p.id, type: "poi", d: Math.max(1, p.d - CFG.guideLeadM), poi: p });
-  // 曲がり角：前後40mの向きの差が55°以上の地点（80m以内は1つにまとめる）
+  // 曲がり角：前後40mの向きの差が70°以上の地点（150m以内は1つにまとめる）
   let lastTurn = -1e9;
   for (let k = 3; k < g.length - 3; k++){
     const d = g[k].d;
     const h1 = bearing(pointAt(d - 40), pointAt(d)), h2 = bearing(pointAt(d), pointAt(d + 40));
     const delta = ((h2 - h1 + 540) % 360) - 180;
-    if (Math.abs(delta) < 55 || d - lastTurn < 80) continue;
+    if (Math.abs(delta) < 70 || d - lastTurn < 150) continue;
     lastTurn = d;
     ev.push({ id: "t" + k, type: "turn", d: Math.max(1, d - CFG.turnLeadM), at: d, dir: delta > 0 ? "右" : "左", sharp: Math.abs(delta) > 110 });
   }
@@ -1238,6 +1260,13 @@ function buildEvents(){
   for (let km = 5; km * 1000 < total - 500; km += 5) ev.push({ id: "k" + km, type: "km", d: km * 1000, km, rest: total / 1000 - km });
   ev.push({ id: "goal", type: "goal", d: Math.max(1, total - 150) });
   ev.sort((a, b) => a.d - b.d);
+  // トイレの案内に「次のトイレまでの距離」を付ける（長距離では重要）
+  const toilets = state.pois.filter(p => p.cat === "toilet");
+  for (const x of ev) if (x.type === "poi" && x.poi.cat === "toilet"){
+    const nx = toilets.find(t => t.d > x.poi.d + 300);
+    x.lastToiletKm = 0; x.nextToiletKm = nx ? ((nx.d - x.poi.d) / 1000).toFixed(1) : null;
+    if (x.nextToiletKm == null) x.lastToiletKm = null;
+  }
   // 既に作ったAI文は引き継ぐ
   const old = new Map(state.events.map(x => [x.id, x]));
   for (const x of ev){ const o = old.get(x.id); if (o){ x.ai = o.ai; x.spoken = o.spoken; } }
@@ -1246,20 +1275,31 @@ function buildEvents(){
 function eventOn(e){ return e.type !== "poi" || catOn(e.poi.cat); }
 const r10 = v => Math.max(10, Math.round(v / 10) * 10);
 
+const pickVar = (id, arr) => { let h = 0; for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return arr[h % arr.length]; };
+function hm(km){ const m = Math.round(km / CFG.paceKmh * 60); return m >= 60 ? `${Math.floor(m / 60)}時間${m % 60 ? `${m % 60}分` : ""}` : `${m}分`; }
 function templateText(e){
   const total = state.grid.length ? state.grid[state.grid.length - 1].d : 0;
   switch (e.type){
-    case "start": return `出発です。ゴールまで約${(total/1000).toFixed(1)}キロです。`;
+    case "start": return `出発です。ゴールまで約${(total/1000).toFixed(1)}キロ、時速${CFG.paceKmh}キロで約${hm(total/1000)}の道のりです。`;
     case "poi": {
       const p = e.poi, nm = poiName(p), kind = poiKind(p);
       const where = p.side === "沿道" ? "道沿い" : `${p.side}手${p.offset > 40 ? `、道から約${r10(p.offset)}メートル` : ""}`;
       const what = nm && nm !== kind ? `${kind}「${nm}」` : kind;
-      return `約${r10(p.d - e.d)}メートル先、${where}に${what}があります。`;
+      const ahead = r10(p.d - e.d);
+      let t = pickVar(e.id, [
+        `約${ahead}メートル先、${where}に${what}があります。`,
+        `この先${ahead}メートルほどで、${where}に${what}。`,
+        `${where}、約${ahead}メートル先に${what}があります。`
+      ]);
+      if (p.wiki) t += p.wiki;
+      if (p.cat === "toilet" && e.lastToiletKm != null) t += `次のトイレまでは約${e.nextToiletKm}キロです。`;
+      return t;
     }
-    case "turn": return `まもなく${e.sharp ? "大きく" : ""}${e.dir}に曲がります。`;
+    case "turn": return pickVar(e.id, [`まもなく${e.sharp ? "大きく" : ""}${e.dir}に曲がります。`, `この先、${e.dir}方向へ進みます。`]);
     case "climb": return `ここから約${r10(e.len)}メートル、上り坂です。標高差は約${Math.round(e.diff)}メートル。`;
     case "descent": return `ここから約${r10(e.len)}メートル、下り坂です。標高差は約${Math.round(e.diff)}メートル。`;
-    case "km": return `${e.km}キロ地点です。ゴールまで残り約${e.rest.toFixed(1)}キロです。`;
+    case "km": return `${e.km}キロ地点です。ここまで約${hm(e.km)}、ゴールまで残り約${e.rest.toFixed(1)}キロです。`;
+    case "area": return e.text;
     case "goal": return "まもなくゴールです。お疲れさまでした。";
   }
   return "";
@@ -1268,8 +1308,9 @@ const textFor = e => (CFG.guideMode === "ai" && e.ai) ? e.ai : templateText(e);
 
 /* 移動のたびに呼ぶ：通過した地点の案内を出す */
 function afterMove(fromD, toD){
-  if (toD < fromD){ for (const e of state.events) if (e.d > toD) e.spoken = false; return; }
+  if (toD < fromD){ for (const e of state.events) if (e.d > toD) e.spoken = false; state.lastArea = null; return; }
   if (CFG.guideMode === "off" || !state.events.length) return;
+  wikiPrefetch(toD); areaPrefetch(toD); areaCheck(toD);
   const jump = toD - fromD;
   if (!state.playing && jump > Math.max(400, CFG.stepM * 3)) return;   // 手動で遠くへ飛んだときは案内しない
   const hit = state.events.filter(e => e.d > fromD && e.d <= toD && !e.spoken && eventOn(e));
@@ -1280,6 +1321,62 @@ function afterMove(fromD, toD){
     caption(text); say(text);
   }
   if (CFG.guideMode === "ai") aiPrefetch(toD);
+}
+
+/* ---------- Wikipedia の要約（見どころにWikipediaのタグがある場合だけ。事実の出典として使う） ---------- */
+async function wikiPrefetch(d){
+  const near = state.pois.filter(p => p.d > d && p.d - d < 1500 && p.tags.wikipedia && p.wiki === undefined && catOn(p.cat));
+  for (const p of near){
+    p.wiki = null;
+    const m = p.tags.wikipedia.match(/^(\w+):(.+)$/); if (!m || m[1] !== "ja") continue;
+    try{
+      const r = await fetch(`https://ja.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(m[2].replace(/ /g, "_"))}`);
+      if (!r.ok) continue;
+      const j = await r.json();
+      const first = String(j.extract || "").split("。")[0];
+      if (first && first.length <= 90) p.wiki = first + "。（Wikipediaより）";
+      p.wikiFull = String(j.extract || "").slice(0, 300);
+    }catch(e){}
+  }
+}
+
+/* ---------- 地名（OSMのNominatimで逆引き。市区町村や町名が変わったら案内） ---------- */
+state.areas = new Map(); state.lastArea = null; let areaBusy = false;
+async function areaPrefetch(d){
+  if (areaBusy || !state.grid.length) return;
+  areaBusy = true;
+  try{
+    const S = CFG.areaStepM, total = state.grid[state.grid.length - 1].d;
+    for (let x = Math.floor(d / S) * S; x <= Math.min(total, d + CFG.areaAheadM); x += S){
+      if (state.areas.has(x)) continue;
+      const pt = pointAt(x);
+      state.areas.set(x, null);
+      try{
+        const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&accept-language=ja&lat=${pt.lat.toFixed(5)}&lon=${pt.lon.toFixed(5)}`);
+        if (r.ok){
+          const a = (await r.json()).address || {};
+          const city = a.city || a.town || a.village || a.municipality || "";
+          const ward = a.city_district || "";
+          const sub = a.suburb || a.quarter || a.neighbourhood || "";
+          state.areas.set(x, { city, ward, sub });
+        }
+      }catch(e){}
+      await new Promise(r => setTimeout(r, 1100));   // Nominatimの利用ルール（1秒1回まで）
+    }
+  } finally { areaBusy = false; }
+}
+function areaCheck(d){
+  const S = CFG.areaStepM;
+  const a = state.areas.get(Math.floor(d / S) * S);
+  if (!a || !a.city) return;
+  const prev = state.lastArea;
+  state.lastArea = a;
+  if (!prev) return;
+  let text = "";
+  if (a.city !== prev.city) text = `${a.city}${a.ward ? a.ward : ""}${a.sub ? `の${a.sub}` : ""}に入りました。`;
+  else if (a.ward && a.ward !== prev.ward) text = `${a.ward}に入りました。`;
+  else if (a.sub && prev.sub && a.sub !== prev.sub) text = `${a.sub}に入りました。`;
+  if (text){ caption(text); say(text); }
 }
 
 /* ---------- 字幕と読み上げ ---------- */
@@ -1323,9 +1420,11 @@ function aiFacts(e){
     const p = e.poi, t = p.tags;
     f.poi = { kind: poiKind(p), name: poiName(p) || null, meters_ahead: r10(p.d - e.d), side: p.side, meters_from_road: r10(p.offset) };
     for (const k of ["opening_hours", "fee", "wheelchair", "brand", "description", "historic", "tourism"]) if (t[k]) f.poi[k] = String(t[k]).slice(0, 80);
+    if (p.wikiFull) f.poi.wikipedia_summary = p.wikiFull;
+    if (e.nextToiletKm) f.poi.next_toilet_km = +e.nextToiletKm;
   } else if (e.type === "turn"){ f.direction = e.dir; f.sharp = !!e.sharp; }
   else if (e.type === "climb" || e.type === "descent"){ f.length_m = r10(e.len); f.elevation_diff_m = Math.round(e.diff); }
-  else if (e.type === "km"){ f.km = e.km; f.remaining_km = +e.rest.toFixed(1); }
+  else if (e.type === "km"){ f.km = e.km; f.remaining_km = +e.rest.toFixed(1); f.elapsed_at_pace = hm(e.km); f.pace_kmh = CFG.paceKmh; }
   return f;
 }
 async function aiPrefetch(d){
