@@ -124,6 +124,9 @@ body[data-main="map"] #svPane {grid-area:sub}
 .ahead button b{font-family:var(--num); font-weight:600; min-width:4.2em}
 .ahead button span{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .ahead .none{color:var(--muted); font-size:12px}
+.cands button{flex-direction:column; align-items:flex-start; gap:0}
+.cands button span{white-space:normal; color:var(--muted); font-size:12px}
+.cands button.sel{border-color:var(--route); box-shadow:inset 3px 0 0 var(--route)}
 .chips{display:flex; flex-wrap:wrap; gap:4px 6px; margin-top:8px}
 .chips label{display:flex; align-items:center; gap:3px; font-size:12px; color:var(--muted);
   border:1px solid var(--line); border-radius:12px; padding:2px 8px 2px 4px}
@@ -209,10 +212,24 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
       <label class="chk"><input type="checkbox" id="cSkip" checked> 表示できない地点は飛ばす</label>
       <label class="chk"><input type="checkbox" id="cFollow" checked> 地図を追従</label>
     </div>
+    <div class="sec" id="candSec" hidden>
+      <div class="sec-title">ルート候補（タップで切り替え・地図の点線もタップ可）</div>
+      <div id="cands" class="ahead cands"></div>
+    </div>
     <div class="sec">
       <div class="sec-title">この先のスポット</div>
       <div id="ahead" class="ahead"><div class="none">ルートを読み込むと表示されます</div></div>
       <div id="chips" class="chips"></div>
+      <div class="opts" style="margin-top:6px">
+        <label>スポットの範囲
+          <select id="sRadius">
+            <option value="200" selected>道から200m</option>
+            <option value="500">道から500m</option>
+            <option value="1000">道から1km</option>
+          </select>
+        </label>
+        <button id="bRefetch" type="button">再取得</button>
+      </div>
       <div id="poiStatus" class="status"></div>
     </div>
     <div class="sec">
@@ -541,9 +558,17 @@ async function geocode(q){
 }
 /* 経路エンジン呼び出し。中継用URLがあればWorker経由（ブラウザの接続制限を回避）、なければ直接 */
 const coordStr = wps => wps.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
+/* タイムアウト付きfetch（公開サーバーが応答しないまま固まるのを防ぐ） */
+async function fetchT(url, opts = {}, ms = 30000){
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try{ return await fetch(url, { ...opts, signal: ac.signal }); }
+  catch(e){ throw new Error(e.name === "AbortError" ? `${Math.round(ms/1000)}秒以内に応答なし` : e.message); }
+  finally{ clearTimeout(t); }
+}
 async function fetchJSON(url, label){
   let r;
-  try{ r = await fetch(url); }
+  try{ r = await fetchT(url, {}, 45000); }
   catch(e){ throw new Error(`${label}: ブラウザから接続できませんでした（${e.message}）`); }
   const text = await r.text();
   if (!r.ok) throw new Error(`${label}: ${r.status} ${text.slice(0, 120)}`);
@@ -567,10 +592,10 @@ async function keyFromCode(code){
   if (!j.key) throw new Error("APIキーを受け取れませんでした。");
   return j.key;
 }
-async function routeBRouter(wps){
+async function routeBRouter(wps, profile = "hiking-mountain", alt = 0){
   const px = proxyBase(), c = coordStr(wps);
-  const url = px ? `${px}/route?engine=brouter&coords=${c}`
-                 : `https://brouter.de/brouter?lonlats=${c.replace(/;/g, "|")}&profile=hiking-mountain&alternativeidx=0&format=geojson`;
+  const url = px ? `${px}/route?engine=brouter&coords=${c}&profile=${profile}&alt=${alt}`
+                 : `https://brouter.de/brouter?lonlats=${c.replace(/;/g, "|")}&profile=${profile}&alternativeidx=${alt}&format=geojson`;
   const j = await fetchJSON(url, px ? "BRouter（中継）" : "BRouter");
   const co = j.features && j.features[0] && j.features[0].geometry.coordinates;
   if (!co) throw new Error("BRouter: 経路が返ってきませんでした");
@@ -583,6 +608,40 @@ async function routeOSRM(wps){
   const j = await fetchJSON(url, px ? "OSRM（中継）" : "OSRM");
   if (j.code !== "Ok") throw new Error(`OSRM: ${j.code} ${j.message || ""}`);
   return j.routes[0].geometry.coordinates.map(([lon, lat]) => ({ lat, lon, ele: null }));
+}
+
+/* ルート候補：経路エンジンと設定を変えて複数作り、ほぼ同じ道のものは1つにまとめる */
+const CAND_DEFS = [
+  { key: "A", label: "歩行者向け",   note: "BRouter hiking-mountain",  fn: w => routeBRouter(w, "hiking-mountain", 0) },
+  { key: "B", label: "別ルート",     note: "BRouter 代替案",           fn: w => routeBRouter(w, "hiking-mountain", 1) },
+  { key: "C", label: "最短寄り",     note: "BRouter shortest",         fn: w => routeBRouter(w, "shortest", 0) },
+  { key: "D", label: "一般的な徒歩", note: "OSRM foot",                fn: w => routeOSRM(w) }
+];
+function overlapRatio(a, b){   // aの点のうち、bから30m以内にある割合
+  let hit = 0, n = 0;
+  for (let i = 0; i < a.length; i += 5){
+    n++;
+    for (let k = 0; k < b.length; k++){ if (Math.abs(a[i].lat - b[k].lat) > 0.0006) continue; if (hav(a[i], b[k]) < 30){ hit++; break; } }
+  }
+  return n ? hit / n : 1;
+}
+async function routeCandidates(link, onStep){
+  const { wps, name } = await waypointsFromGmapsLink(link);
+  const cands = [], errs = [];
+  for (let i = 0; i < CAND_DEFS.length; i++){
+    const def = CAND_DEFS[i];
+    onStep && onStep(`ルート候補を作成中… ${i + 1}/${CAND_DEFS.length}（${def.label}）`);
+    try{
+      const pts = normalize(await def.fn(wps));
+      if (pts.length < 2) continue;
+      const grid = resample(pts, cumulative(pts), 20);
+      if (cands.some(c => overlapRatio(grid, c.grid) > 0.95 && overlapRatio(c.grid, grid) > 0.95)) continue;
+      cands.push({ ...def, pts, grid, km: grid[grid.length - 1].d / 1000, stats: null });
+    }catch(e){ errs.push(`${def.label}: ${e.message}`); }
+    if (i < CAND_DEFS.length - 1) await new Promise(r => setTimeout(r, 400));
+  }
+  if (!cands.length) throw new Error("経路を作れませんでした。\n" + errs.join("\n"));
+  return { wps, name, cands, errs };
 }
 async function routeFromLink(link, engine){
   const { wps, name } = await waypointsFromGmapsLink(link);
@@ -1097,7 +1156,7 @@ async function overpassFetch(q){
   for (let attempt = 0; attempt < 2; attempt++){
     for (const t of targets){
       try{
-        const r = await fetch(t.u, opts);
+        const r = await fetchT(t.u, opts, 40000);
         if (r.ok) return await r.json();
         errs.push(`${t.label} ${r.status}`);
       }catch(e){ errs.push(`${t.label} ${e.message}`); }
@@ -1108,60 +1167,163 @@ async function overpassFetch(q){
 }
 
 /* 経路上の位置（距離d・左右・離れ具合）を付ける */
-function placeOnRoute(p){
-  const g = state.grid;
+function nearestOnGrid(g, p){
   let best = 0, bd = Infinity;
   for (let k = 0; k < g.length; k++){
-    const dLat = g[k].lat - p.lat; if (Math.abs(dLat) > 0.01) continue;
+    if (Math.abs(g[k].lat - p.lat) > 0.012) continue;
     const d = hav(g[k], p); if (d < bd){ bd = d; best = k; }
   }
-  if (bd === Infinity) for (let k = 0; k < g.length; k++){ const d = hav(g[k], p); if (d < bd){ bd = d; best = k; } }
+  return { k: best, dist: bd, d: g[best].d };
+}
+function placeOnRoute(p){
+  const g = state.grid;
+  const nb = nearestOnGrid(g, p);
+  const best = nb.k, bd = nb.dist;
   const d = g[best].d;
   const hb = bearing(pointAt(d - 10), pointAt(d + 10));
   const rel = ((bearing(g[best], p) - hb + 540) % 360) - 180;
   p.d = d; p.offset = bd; p.side = bd < 15 ? "沿道" : (rel > 0 ? "右" : "左");
 }
 
+/* スポットは約2km四方のタイル単位で取得してキャッシュする。
+   ルート候補どうしで重なるタイルは1回しか取らないので、候補を比べても負荷が増えにくい。 */
+const TILE_LAT = 0.02, TILE_LON = 0.025;
+state.tiles = new Map();   // key -> { st: "ok" | "err", els: [] }
+const tileKey = (lat, lon) => `${Math.floor(lat / TILE_LAT)}_${Math.floor(lon / TILE_LON)}`;
+function tilesFor(grid, R){
+  const keys = [], seen = new Set();
+  const dLat = R / 111000;
+  for (let i = 0; i < grid.length; i += 3){
+    const p = grid[i], dLon = R / (111000 * Math.cos(p.lat * toR));
+    for (const la of [p.lat - dLat, p.lat + dLat]) for (const lo of [p.lon - dLon, p.lon + dLon]){
+      const k = tileKey(la, lo); if (!seen.has(k)){ seen.add(k); keys.push(k); }
+    }
+  }
+  return keys;
+}
+function tileQuery(key){
+  const [a, b] = key.split("_").map(Number);
+  const bb = `(${(a*TILE_LAT).toFixed(5)},${(b*TILE_LON).toFixed(5)},${((a+1)*TILE_LAT).toFixed(5)},${((b+1)*TILE_LON).toFixed(5)})`;
+  return `[out:json][timeout:25];(` +
+    `nwr[amenity~"^(toilets|drinking_water|cafe|place_of_worship)$"]${bb};` +
+    `nwr[shop=convenience]${bb};` +
+    `nwr[tourism~"^(viewpoint|attraction|museum)$"]${bb};` +
+    `nwr[historic][name]${bb};` +
+    `);out center tags;`;
+}
+function elementsFor(keys){
+  const out = [], seen = new Set();
+  for (const k of keys){
+    const t = state.tiles.get(k); if (!t || t.st !== "ok") continue;
+    for (const el of t.els){
+      const id = el.type + el.id; if (seen.has(id)) continue; seen.add(id);
+      const lat = el.lat != null ? el.lat : el.center && el.center.lat;
+      const lon = el.lon != null ? el.lon : el.center && el.center.lon;
+      const tags = el.tags || {}, cat = poiCat(tags);
+      if (lat != null && cat) out.push({ id, lat, lon, tags, cat });
+    }
+  }
+  return out;
+}
+
+/* 今のルートのスポットをキャッシュから組み立て直す */
+function refreshSpots(){
+  for (const k in poiLayers) poiLayers[k].clearLayers();
+  const R = CFG.poiRadiusM;
+  state.pois = [];
+  for (const p of elementsFor(tilesFor(state.grid, R))){
+    placeOnRoute(p);
+    if (p.offset > R) continue;
+    state.pois.push(p); addSpotMarker(p);
+  }
+  state.pois.sort((a, b) => a.d - b.d);
+  buildEvents(); renderAhead();
+}
+
+/* 候補ごとの集計：トイレ・コンビニの数と、補給できない最長区間 */
+function candStats(c){
+  const R = CFG.poiRadiusM, keys = tilesFor(c.grid, R);
+  const done = keys.filter(k => state.tiles.has(k)).length;
+  const on = [];
+  const cnt = { toilet: 0, konbini: 0, water: 0, sight: 0 };
+  for (const p of elementsFor(keys)){
+    const nb = nearestOnGrid(c.grid, p); if (nb.dist > R) continue;
+    if (p.cat in cnt) cnt[p.cat]++;
+    if (p.cat === "toilet" || p.cat === "konbini") on.push(nb.d);
+  }
+  on.sort((a, b) => a - b);
+  const total = c.grid[c.grid.length - 1].d;
+  let gap = 0, prev = 0;
+  for (const d of on){ gap = Math.max(gap, d - prev); prev = d; }
+  gap = Math.max(gap, total - prev);
+  let up = null;
+  if (c.grid.some(p => p.ele != null)){
+    up = 0; let last = null;
+    for (let i = 0; i < c.grid.length; i += 5){ const e = c.grid[i].ele; if (e == null) continue; if (last != null && e > last) up += e - last; last = e; }
+  }
+  c.stats = { ...cnt, gapKm: gap / 1000, up, complete: done === keys.length };
+}
+
 async function fetchSpots(){
   const tok = ++state.poiTok;
   const st = $("#poiStatus");
-  state.pois = []; for (const k in poiLayers) poiLayers[k].clearLayers();
-  const g = state.grid, total = g[g.length - 1].d;
-  const chunks = [];
-  for (let d0 = 0; d0 < total; d0 += CFG.poiChunkM){
-    const part = g.filter(p => p.d >= d0 && p.d <= d0 + CFG.poiChunkM + 20);
-    if (part.length) chunks.push(part);
-  }
-  // 今いる地点に近い区間から順に取る
+  refreshSpots();
+  const R = CFG.poiRadiusM;
+  // 今のルート（今いる地点に近い順）→ 他の候補、の順にタイルを取る
   const cur = state.pts.length ? state.pts[state.i].d : 0;
-  const order = chunks.map((c, i) => i).sort((x, y) => Math.abs(x * CFG.poiChunkM - cur) - Math.abs(y * CFG.poiChunkM - cur));
-  const seen = new Set();
-  let failed = 0, lastErr = "";
-  for (let n = 0; n < order.length; n++){
-    st.textContent = `スポットを取得中… ${n + 1}/${order.length}${failed ? `（失敗 ${failed}）` : ""}`;
-    let j;
-    try{ j = await overpassFetch(bboxQuery(chunks[order[n]], CFG.poiRadiusM)); }
-    catch(e){ failed++; lastErr = e.message; if (tok !== state.poiTok) return; continue; }
+  const mine = tilesFor(state.grid.filter(p => Math.abs(p.d - cur) < 3000), R)
+    .concat(tilesFor(state.grid, R));
+  const others = (state.cands || []).flatMap(c => tilesFor(c.grid, R));
+  const queue = [...new Set(mine.concat(others))].filter(k => !(state.tiles.get(k) || {}).st || state.tiles.get(k).st === "err");
+  const total = queue.length;
+  let n = 0, failed = 0, lastErr = "";
+  for (const k of queue){
     if (tok !== state.poiTok) return;
-    for (const el of j.elements || []){
-      const key = el.type + el.id; if (seen.has(key)) continue;
-      const lat = el.lat != null ? el.lat : el.center && el.center.lat;
-      const lon = el.lon != null ? el.lon : el.center && el.center.lon;
-      const tags = el.tags || {}; const cat = poiCat(tags);
-      if (lat == null || !cat) continue;
-      const p = { id: key, lat, lon, tags, cat };
-      placeOnRoute(p);
-      if (p.offset > CFG.poiRadiusM) continue;
-      seen.add(key);
-      state.pois.push(p); addSpotMarker(p);
-    }
-    state.pois.sort((a, b) => a.d - b.d);
-    buildEvents(); renderAhead();
-    if (n < order.length - 1) await new Promise(r => setTimeout(r, 1200));   // 公開サーバーへの配慮
+    n++;
+    st.textContent = `スポットを取得中… ${n}/${total}${failed ? `（失敗 ${failed}）` : ""}`;
+    try{
+      const j = await overpassFetch(tileQuery(k));
+      state.tiles.set(k, { st: "ok", els: j.elements || [] });
+    }catch(e){ state.tiles.set(k, { st: "err", els: [] }); failed++; lastErr = e.message; }
+    if (tok !== state.poiTok) return;
+    refreshSpots();
+    (state.cands || []).forEach(candStats); renderCands();
+    await new Promise(r => setTimeout(r, 1200));   // 公開サーバーへの配慮
   }
+  refreshSpots();
+  (state.cands || []).forEach(candStats); renderCands();
   const counts = Object.keys(POI_CATS).map(k => `${POI_CATS[k].emoji}${state.pois.filter(p => p.cat === k).length}`).join(" ");
-  st.textContent = `経路から${CFG.poiRadiusM}m以内：${counts}` + (failed ? `／${failed}区間は取得失敗（${lastErr}）` : "") + "（© OpenStreetMap contributors）";
+  const errTiles = tilesFor(state.grid, R).filter(k => (state.tiles.get(k) || {}).st === "err").length;
+  st.textContent = `経路から${R}m以内：${counts}` + (errTiles ? `／${errTiles}タイル取得失敗（${lastErr}）。「再取得」で失敗分だけ取り直せます` : "") + "（© OpenStreetMap contributors）";
 }
+
+/* ---------- ルート候補の表示と切り替え ---------- */
+const candLayer = L.layerGroup().addTo(map);
+function renderCands(){
+  const sec = $("#candSec"), box = $("#cands");
+  const cs = state.cands || [];
+  sec.hidden = cs.length < 2;
+  if (cs.length < 2) return;
+  box.innerHTML = cs.map((c, i) => {
+    const s = c.stats;
+    const info = s ? `${c.km.toFixed(1)}km${s.up != null ? `・↑${Math.round(s.up)}m` : ""}・🚻${s.toilet} 🏪${s.konbini}・補給なし最長${s.gapKm.toFixed(1)}km${s.complete ? "" : "（集計中）"}`
+                   : `${c.km.toFixed(1)}km・集計中`;
+    return `<button type="button" class="${i === state.candSel ? "sel" : ""}" data-cand="${i}"><b>${c.key} ${c.label}</b><span>${info}</span></button>`;
+  }).join("");
+  candLayer.clearLayers();
+  cs.forEach((c, i) => {
+    if (i === state.candSel) return;
+    L.polyline(c.pts.map(p => [p.lat, p.lon]), { color: cssVar("--muted"), weight: 5, opacity: .55, dashArray: "6 6" })
+      .on("click", () => selectCand(i)).bindTooltip(`${c.key} ${c.label}`).addTo(candLayer);
+  });
+}
+function selectCand(i){
+  const c = state.cands[i]; if (!c) return;
+  state.candSel = i;
+  setRoute(c.pts, `${state.linkName}（${c.key} ${c.label}）`, state.linkWps, true);
+  renderCands();
+}
+document.addEventListener("click", e => { const b = e.target.closest("[data-cand]"); if (b) selectCand(+b.dataset.cand); });
 
 function addSpotMarker(p){
   const c = POI_CATS[p.cat];
@@ -1207,6 +1369,8 @@ function initSpotUI(){
     syncLayers(); renderAhead();
   };
   syncLayers();
+  $("#sRadius").onchange = e => { CFG.poiRadiusM = +e.target.value; if (state.grid.length) fetchSpots(); };
+  $("#bRefetch").onclick = () => { if (state.grid.length) fetchSpots(); };
   $("#sGuide").onchange = e => { CFG.guideMode = e.target.value; guideStatus(); if (CFG.guideMode === "ai" && state.pts.length) aiPrefetch(state.pts[state.i].d); };
   $("#cVoice").onchange = e => { CFG.voice = e.target.checked; if (CFG.voice) unlockSpeech(); else if (window.speechSynthesis) speechSynthesis.cancel(); };
   $("#cWait").onchange = e => { CFG.waitSpeech = e.target.checked; };
@@ -1460,8 +1624,9 @@ function rebuild(keepDistance){
   drawRoute();
   show(Math.min(state.pts.length - 1, Math.round(d / CFG.stepM)));
 }
-function setRoute(pts, name, wps){
+function setRoute(pts, name, wps, keepCands){
   pause();
+  if (!keepCands){ state.cands = []; state.candSel = 0; candLayer.clearLayers(); renderCands(); }
   state.raw = pts; state.name = name;
   state.fromLink = !!wps;
   wpLayer.clearLayers();
@@ -1475,8 +1640,11 @@ async function loadRouteFile(f){
   setRoute(pts, name || f.name, null);
 }
 async function loadRouteLink(link){
-  const { pts, name, wps } = await routeFromLink(link, $("#sEngine").value);
-  setRoute(pts, name, wps);
+  const { wps, name, cands } = await routeCandidates(link, t => { $("#setupErr").textContent = t; });
+  state.linkName = name; state.linkWps = wps;
+  state.cands = cands; state.candSel = 0;
+  setRoute(cands[0].pts, `${name}（${cands[0].key} ${cands[0].label}）`, wps, true);
+  renderCands();
 }
 
 /* ---------- Main view switch ---------- */
