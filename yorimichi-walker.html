@@ -1146,24 +1146,35 @@ const OVERPASS_SERVERS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.private.coffee/api/interpreter"   // 有志の公開ミラー（稼働状況は保証されない）
 ];
+/* サーバーごとに「休ませる時間」を持ち、429（混雑・回数制限）や504（タイムアウト）が返ったら
+   そのサーバーをしばらく使わず、別のサーバーに回す。同時に投げるのは常に1件だけ。 */
+const opCool = new Map();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function overpassFetch(q){
-  const body = "data=" + encodeURIComponent(q);
-  const opts = { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body };
+  const opts = { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "data=" + encodeURIComponent(q) };
   const errs = [];
-  const targets = OVERPASS_SERVERS.map(u => ({ u, label: new URL(u).hostname }));
-  const px = proxyBase();
-  if (px) targets.push({ u: px + "/overpass", label: "中継" });
-  for (let attempt = 0; attempt < 2; attempt++){
-    for (const t of targets){
-      try{
-        const r = await fetchT(t.u, opts, 40000);
-        if (r.ok) return await r.json();
-        errs.push(`${t.label} ${r.status}`);
-      }catch(e){ errs.push(`${t.label} ${e.message}`); }
+  for (let attempt = 0; attempt < 6; attempt++){
+    const now = Date.now();
+    const avail = OVERPASS_SERVERS.filter(u => (opCool.get(u) || 0) <= now);
+    if (!avail.length){
+      const wait = Math.min(...OVERPASS_SERVERS.map(u => opCool.get(u) || 0)) - now;
+      spotStatus(`サーバーが混雑しているため、${Math.ceil(wait / 1000)}秒待ってから再開します…`);
+      await sleep(Math.max(1000, wait));
+      continue;
     }
-    await new Promise(r => setTimeout(r, 3000));   // 混雑時は少し待ってからもう一巡
+    const u = avail[0], host = new URL(u).hostname;
+    try{
+      const r = await fetchT(u, opts, 40000);
+      if (r.ok) return await r.json();
+      const cool = r.status === 429 ? 20000 * (attempt + 1) : r.status >= 500 ? 30000 : 10000;
+      opCool.set(u, Date.now() + cool);
+      errs.push(`${host} ${r.status}`);
+    }catch(e){
+      opCool.set(u, Date.now() + 20000);
+      errs.push(`${host} ${e.message}`);
+    }
   }
-  throw new Error(errs.slice(-3).join(" / "));
+  throw new Error(errs.slice(-2).join(" / "));
 }
 
 /* 経路上の位置（距離d・左右・離れ具合）を付ける */
@@ -1234,6 +1245,9 @@ function refreshSpots(){
   for (const p of elementsFor(tilesFor(state.grid, R))){
     placeOnRoute(p);
     if (p.offset > R) continue;
+    // 同じ店が「点」と「建物」の両方で登録されていることがあるので、同種・同名で40m以内は1つにまとめる
+    const nm = poiName(p);
+    if (state.pois.some(q => q.cat === p.cat && poiName(q) === nm && hav(q, p) < 40)) continue;
     state.pois.push(p); addSpotMarker(p);
   }
   state.pois.sort((a, b) => a.d - b.d);
@@ -1244,10 +1258,15 @@ function refreshSpots(){
 function candStats(c){
   const R = CFG.poiRadiusM, keys = tilesFor(c.grid, R);
   const done = keys.filter(k => state.tiles.has(k)).length;
+  const errN = keys.filter(k => (state.tiles.get(k) || {}).st === "err").length;
   const on = [];
   const cnt = { toilet: 0, konbini: 0, water: 0, sight: 0 };
+  const kept = [];
   for (const p of elementsFor(keys)){
     const nb = nearestOnGrid(c.grid, p); if (nb.dist > R) continue;
+    const nm = poiName(p);
+    if (kept.some(q => q.cat === p.cat && poiName(q) === nm && hav(q, p) < 40)) continue;
+    kept.push(p);
     if (p.cat in cnt) cnt[p.cat]++;
     if (p.cat === "toilet" || p.cat === "konbini") on.push(nb.d);
   }
@@ -1261,40 +1280,59 @@ function candStats(c){
     up = 0; let last = null;
     for (let i = 0; i < c.grid.length; i += 5){ const e = c.grid[i].ele; if (e == null) continue; if (last != null && e > last) up += e - last; last = e; }
   }
-  c.stats = { ...cnt, gapKm: gap / 1000, up, complete: done === keys.length };
+  c.stats = { ...cnt, gapKm: gap / 1000, up, complete: done === keys.length, partial: errN > 0 };
 }
 
-async function fetchSpots(){
-  const tok = ++state.poiTok;
-  const st = $("#poiStatus");
-  refreshSpots();
-  const R = CFG.poiRadiusM;
-  // 今のルート（今いる地点に近い順）→ 他の候補、の順にタイルを取る
-  const cur = state.pts.length ? state.pts[state.i].d : 0;
-  const mine = tilesFor(state.grid.filter(p => Math.abs(p.d - cur) < 3000), R)
-    .concat(tilesFor(state.grid, R));
-  const others = (state.cands || []).flatMap(c => tilesFor(c.grid, R));
-  const queue = [...new Set(mine.concat(others))].filter(k => !(state.tiles.get(k) || {}).st || state.tiles.get(k).st === "err");
-  const total = queue.length;
-  let n = 0, failed = 0, lastErr = "";
-  for (const k of queue){
-    if (tok !== state.poiTok) return;
-    n++;
-    st.textContent = `スポットを取得中… ${n}/${total}${failed ? `（失敗 ${failed}）` : ""}`;
+/* タイル取得は1本の待ち行列で順番に処理する。候補を切り替えても並行して走らず、
+   優先順位（今のルート・今いる地点の近く）が入れ替わるだけ。 */
+state.tileQueue = []; let tileRunner = null;
+const tileOk = k => (state.tiles.get(k) || {}).st === "ok";
+function spotStatus(msg){
+  const st = $("#poiStatus"); if (!st) return;
+  if (msg){ st.textContent = msg; return; }
+  const keys = tilesFor(state.grid, CFG.poiRadiusM);
+  const ok = keys.filter(tileOk).length, err = keys.filter(k => (state.tiles.get(k) || {}).st === "err").length;
+  const pend = keys.length - ok - err;
+  if (pend > 0){ st.textContent = `スポットを取得中… ${ok + err}/${keys.length}${err ? `（失敗 ${err}）` : ""}`; return; }
+  const counts = Object.keys(POI_CATS).map(k => `${POI_CATS[k].emoji}${state.pois.filter(p => p.cat === k).length}`).join(" ");
+  const lastErr = err ? (state.tiles.get(keys.find(k => (state.tiles.get(k) || {}).st === "err")) || {}).err : "";
+  st.textContent = `経路から${CFG.poiRadiusM}m以内：${counts}` + (err ? `／${err}区画は取得失敗（${lastErr}）。「再取得」で失敗分だけ取り直せます` : "") + "（© OpenStreetMap contributors）";
+}
+function queueTiles(keys){
+  const want = keys.filter(k => !tileOk(k) && (state.tiles.get(k) || {}).st !== "err");
+  state.tileQueue = [...new Set([...want, ...state.tileQueue])];
+  if (!tileRunner) tileRunner = runTileQueue().finally(() => { tileRunner = null; });
+}
+async function runTileQueue(){
+  while (state.tileQueue.length){
+    const k = state.tileQueue.shift();
+    if (tileOk(k)) continue;
+    spotStatus();
     try{
       const j = await overpassFetch(tileQuery(k));
       state.tiles.set(k, { st: "ok", els: j.elements || [] });
-    }catch(e){ state.tiles.set(k, { st: "err", els: [] }); failed++; lastErr = e.message; }
-    if (tok !== state.poiTok) return;
+    }catch(e){ state.tiles.set(k, { st: "err", els: [], err: e.message }); }
     refreshSpots();
     (state.cands || []).forEach(candStats); renderCands();
-    await new Promise(r => setTimeout(r, 1200));   // 公開サーバーへの配慮
+    spotStatus();
+    if (state.tileQueue.length) await sleep(1500);   // 公開サーバーへの配慮
   }
+  spotStatus();
+}
+function fetchSpots(){
   refreshSpots();
+  const R = CFG.poiRadiusM;
+  const cur = state.pts.length ? state.pts[state.i].d : 0;
+  const near = tilesFor(state.grid.filter(p => Math.abs(p.d - cur) < 3000), R);
+  const mine = tilesFor(state.grid, R);
+  const others = (state.cands || []).flatMap(c => tilesFor(c.grid, R));
+  queueTiles([...near, ...mine, ...others]);
   (state.cands || []).forEach(candStats); renderCands();
-  const counts = Object.keys(POI_CATS).map(k => `${POI_CATS[k].emoji}${state.pois.filter(p => p.cat === k).length}`).join(" ");
-  const errTiles = tilesFor(state.grid, R).filter(k => (state.tiles.get(k) || {}).st === "err").length;
-  st.textContent = `経路から${R}m以内：${counts}` + (errTiles ? `／${errTiles}タイル取得失敗（${lastErr}）。「再取得」で失敗分だけ取り直せます` : "") + "（© OpenStreetMap contributors）";
+  spotStatus();
+}
+function refetchFailed(){
+  for (const [k, t] of state.tiles) if (t.st === "err") state.tiles.delete(k);
+  fetchSpots();
 }
 
 /* ---------- ルート候補の表示と切り替え ---------- */
@@ -1306,7 +1344,7 @@ function renderCands(){
   if (cs.length < 2) return;
   box.innerHTML = cs.map((c, i) => {
     const s = c.stats;
-    const info = s ? `${c.km.toFixed(1)}km${s.up != null ? `・↑${Math.round(s.up)}m` : ""}・🚻${s.toilet} 🏪${s.konbini}・補給なし最長${s.gapKm.toFixed(1)}km${s.complete ? "" : "（集計中）"}`
+    const info = s ? `${c.km.toFixed(1)}km${s.up != null ? `・↑${Math.round(s.up)}m` : ""}・🚻${s.toilet} 🏪${s.konbini}・補給なし最長${s.gapKm.toFixed(1)}km${!s.complete ? "（集計中）" : s.partial ? "（一部未取得）" : ""}`
                    : `${c.km.toFixed(1)}km・集計中`;
     return `<button type="button" class="${i === state.candSel ? "sel" : ""}" data-cand="${i}"><b>${c.key} ${c.label}</b><span>${info}</span></button>`;
   }).join("");
@@ -1370,7 +1408,7 @@ function initSpotUI(){
   };
   syncLayers();
   $("#sRadius").onchange = e => { CFG.poiRadiusM = +e.target.value; if (state.grid.length) fetchSpots(); };
-  $("#bRefetch").onclick = () => { if (state.grid.length) fetchSpots(); };
+  $("#bRefetch").onclick = () => { if (state.grid.length) refetchFailed(); };
   $("#sGuide").onchange = e => { CFG.guideMode = e.target.value; guideStatus(); if (CFG.guideMode === "ai" && state.pts.length) aiPrefetch(state.pts[state.i].d); };
   $("#cVoice").onchange = e => { CFG.voice = e.target.checked; if (CFG.voice) unlockSpeech(); else if (window.speechSynthesis) speechSynthesis.cancel(); };
   $("#cWait").onchange = e => { CFG.waitSpeech = e.target.checked; };
