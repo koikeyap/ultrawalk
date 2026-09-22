@@ -124,7 +124,7 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
 .drop.over{border-color:var(--route); color:var(--ink)}
 .drop strong{color:var(--ink)}
 .row{display:flex; gap:10px; justify-content:flex-end; align-items:center; margin-top:8px}
-.err-line{color:var(--route); font-size:13px; min-height:1.4em; margin:0 0 6px}
+.err-line{color:var(--route); font-size:13px; min-height:1.4em; margin:0 0 6px; white-space:pre-line}
 .field input[type=url]{width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg)}
 .field small{display:block; color:var(--muted); font-size:12px; margin-top:4px; max-width:60ch}
 .or{color:var(--muted); font-size:12px; text-align:center; margin:-6px 0 10px}
@@ -170,6 +170,7 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
       </label>
       <label>歩幅
         <select id="sStep">
+          <option value="20">20 m</option>
           <option value="50" selected>50 m</option>
           <option value="100">100 m</option>
           <option value="200">200 m</option>
@@ -183,6 +184,7 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
           <option value="show">表示</option>
         </select>
       </label>
+      <label class="chk"><input type="checkbox" id="cSkip" checked> 表示できない地点は飛ばす</label>
       <label class="chk"><input type="checkbox" id="cFollow" checked> 地図を追従</label>
     </div>
     <button id="bSwap" type="button">メインを地図にする</button>
@@ -215,12 +217,20 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
     </label>
   </div>
   <div class="field">
-    <span>短縮リンクの展開用URL（任意）</span>
+    <span>中継用URL（任意・短縮リンクの展開と経路計算）</span>
     <input id="expIn" type="text" inputmode="url" autocomplete="off" placeholder="https://xxxx.workers.dev">
-    <small>Cloudflare Workers に置いた展開用プログラムのURL。このブラウザに保存されます。</small>
+    <small>Cloudflare Workers に置いた中継プログラムのURL。このブラウザに保存されます。</small>
+    <button id="bTest" type="button" style="margin-top:6px">経路エンジンの接続テスト</button>
+    <div id="testOut" style="font-size:12px; color:var(--muted); margin-top:4px; white-space:pre-line"></div>
   </div>
   <div class="field">
-    <span>Google Maps APIキー（任意）</span>
+    <span>合言葉（ストリートビュー用）</span>
+    <input id="codeIn" type="password" autocomplete="off" placeholder="共有された合言葉">
+    <label class="check"><input id="codeSave" type="checkbox"> このブラウザに保存する</label>
+    <small>合言葉があれば、APIキーを持っていなくてもストリートビューを使えます（中継用URLが必要）。</small>
+  </div>
+  <div class="field">
+    <span>Google Maps APIキー（任意・合言葉の代わり）</span>
     <input id="keyIn" type="password" autocomplete="off" placeholder="AIza...">
     <label class="check"><input id="keySave" type="checkbox"> このブラウザに保存する</label>
   </div>
@@ -250,6 +260,9 @@ const CFG = {
   smoothM: 100,         // 累積標高計算用の平滑化幅
   alignTolDeg: 35,      // 進行方向と「画像地点の道の向き」の許容差（度）
   mismatchMode: "hide", // 向きが合わない画像: hide / dim / show
+  skip: true,           // 画像なし・非表示の地点を再生や◀▶で飛ばす
+  defaultProxy: "",     // 中継用URLの初期値（共有相手が入力しなくて済むよう、ここに書いておける）
+  codeStorage: "routePreviewWalker.code",
   keyStorage: "routePreviewWalker.apiKey",
   expStorage: "routePreviewWalker.expander",
   mainStorage: "routePreviewWalker.main"
@@ -374,7 +387,7 @@ async function resolveLink(input){
   let url = new URL(m[0]);
   if (/(^|\.)goo\.gl$/.test(url.hostname)){
     const exp = sGet(CFG.expStorage);
-    if (!exp) throw new Error("短縮リンクを使うには「短縮リンクの展開用URL」を設定してください。設定しない場合は、一度ブラウザで開いてアドレス欄の長いURLを貼ってください。");
+    if (!exp) throw new Error("短縮リンクを使うには「中継用URL」を設定してください。設定しない場合は、一度ブラウザで開いてアドレス欄の長いURLを貼ってください。");
     let r;
     try{ r = await fetch(exp.replace(/\/$/, "") + "/?u=" + encodeURIComponent(url.href)); }
     catch(e){ throw new Error("展開用URLに接続できませんでした。URLが正しいか確認してください。"); }
@@ -470,27 +483,50 @@ async function geocode(q){
   if (!j.length) throw new Error(`「${q}」の場所が見つかりませんでした。Google マップで地点を地図上から選び直したリンクを試してください。`);
   return { lat: +j[0].lat, lon: +j[0].lon };
 }
-async function routeBRouter(wps){
-  const q = wps.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join("|");
-  const r = await fetch(`https://brouter.de/brouter?lonlats=${q}&profile=hiking-mountain&alternativeidx=0&format=geojson`);
-  if (!r.ok) throw new Error(`BRouter: ${r.status} ${(await r.text()).slice(0, 120)}`);
+/* 経路エンジン呼び出し。中継用URLがあればWorker経由（ブラウザの接続制限を回避）、なければ直接 */
+const coordStr = wps => wps.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
+async function fetchJSON(url, label){
+  let r;
+  try{ r = await fetch(url); }
+  catch(e){ throw new Error(`${label}: ブラウザから接続できませんでした（${e.message}）`); }
+  const text = await r.text();
+  if (!r.ok) throw new Error(`${label}: ${r.status} ${text.slice(0, 120)}`);
+  try{ return JSON.parse(text); }catch(e){ throw new Error(`${label}: 応答を読めませんでした ${text.slice(0, 80)}`); }
+}
+function proxyBase(){
+  if (state.forceDirect) return "";
+  const x = sGet(CFG.expStorage) || CFG.defaultProxy;
+  return x ? x.replace(/\/$/, "") : "";
+}
+/* 合言葉 → 中継WorkerがAPIキーを返す。キーはこのページの実行中だけ使い、保存しない */
+async function keyFromCode(code){
+  const base = proxyBase();
+  if (!base) throw new Error("合言葉を使うには中継用URLが必要です。");
+  let r;
+  try{ r = await fetch(base + "/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) }); }
+  catch(e){ throw new Error("中継用URLに接続できませんでした。"); }
+  if (r.status === 401) throw new Error("合言葉が違うか、無効になっています。");
+  if (!r.ok) throw new Error(`APIキーを受け取れませんでした（${r.status}）。`);
   const j = await r.json();
-  const c = j.features[0].geometry.coordinates;
-  return c.map(([lon, lat, ele]) => ({ lat, lon, ele: isFinite(ele) ? ele : null }));
+  if (!j.key) throw new Error("APIキーを受け取れませんでした。");
+  return j.key;
+}
+async function routeBRouter(wps){
+  const px = proxyBase(), c = coordStr(wps);
+  const url = px ? `${px}/route?engine=brouter&coords=${c}`
+                 : `https://brouter.de/brouter?lonlats=${c.replace(/;/g, "|")}&profile=hiking-mountain&alternativeidx=0&format=geojson`;
+  const j = await fetchJSON(url, px ? "BRouter（中継）" : "BRouter");
+  const co = j.features && j.features[0] && j.features[0].geometry.coordinates;
+  if (!co) throw new Error("BRouter: 経路が返ってきませんでした");
+  return co.map(([lon, lat, ele]) => ({ lat, lon, ele: isFinite(ele) ? ele : null }));
 }
 async function routeOSRM(wps){
-  const q = wps.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
-  let lastErr = "";
-  for (const prof of ["foot", "driving"]){   // FOSSGIS の徒歩サーバー。プロファイル名の書き方が2通りあり得るので両方試す
-    try{
-      const r = await fetch(`https://routing.openstreetmap.de/routed-foot/route/v1/${prof}/${q}?overview=full&geometries=geojson&continue_straight=false`);
-      if (!r.ok){ lastErr = `${r.status}`; continue; }
-      const j = await r.json();
-      if (j.code !== "Ok"){ lastErr = j.code; continue; }
-      return j.routes[0].geometry.coordinates.map(([lon, lat]) => ({ lat, lon, ele: null }));
-    }catch(e){ lastErr = e.message; }
-  }
-  throw new Error(`OSRM: ${lastErr}`);
+  const px = proxyBase(), c = coordStr(wps);
+  const url = px ? `${px}/route?engine=osrm&coords=${c}`
+                 : `https://routing.openstreetmap.de/routed-foot/route/v1/driving/${c}?overview=full&geometries=geojson&continue_straight=false`;
+  const j = await fetchJSON(url, px ? "OSRM（中継）" : "OSRM");
+  if (j.code !== "Ok") throw new Error(`OSRM: ${j.code} ${j.message || ""}`);
+  return j.routes[0].geometry.coordinates.map(([lon, lat]) => ({ lat, lon, ele: null }));
 }
 async function routeFromLink(link, engine){
   const { wps, name } = await waypointsFromGmapsLink(link);
@@ -500,7 +536,31 @@ async function routeFromLink(link, engine){
     try{ const pts = normalize(await fn(wps)); if (pts.length >= 2) return { pts, name, wps }; }
     catch(e){ errs.push(e.message); }
   }
-  throw new Error("経路を作れませんでした。" + errs.join(" / "));
+  throw new Error("経路を作れませんでした。\n" + errs.join("\n"));
+}
+/* 接続テスト：新横浜駅付近の短い区間で、直接・中継の両方を試す */
+async function connectionTest(){
+  const out = $("#testOut");
+  const saved = sGet(CFG.expStorage);
+  sSet(CFG.expStorage, $("#expIn").value.trim());
+  const wps = [{ lat: 35.5069, lon: 139.6172 }, { lat: 35.5100, lon: 139.6200 }];
+  const lines = [];
+  const run = async (label, fn, useProxy) => {
+    state.forceDirect = !useProxy;
+    try{ const r = await fn(wps); lines.push(`○ ${label}：OK（${r.length}点${r.some(p => p.ele != null) ? "・標高あり" : ""}）`); }
+    catch(e){ lines.push(`× ${label}：${e.message}`); }
+    state.forceDirect = false;
+    out.textContent = lines.join("\n");
+  };
+  out.textContent = "テスト中…";
+  await run("BRouter 直接", routeBRouter, false);
+  await run("OSRM 直接", routeOSRM, false);
+  if (proxyBase()){
+    await run("BRouter 中継", routeBRouter, true);
+    await run("OSRM 中継", routeOSRM, true);
+  } else lines.push("（中継用URLが未設定のため、中継のテストは省略）");
+  out.textContent = lines.join("\n");
+  if (!$("#expIn").value.trim()) sSet(CFG.expStorage, saved);
 }
 
 /* ---------- GPX export ---------- */
@@ -819,7 +879,7 @@ async function show(i){
   const idx = state.i, tok = ++state.token;
   const r = await lookup(idx);
   if (tok !== state.token) return;
-  if (r && r.error){ svMsg(`ストリートビューの取得でエラーが発生しました（${r.error}）。時間をおいて再試行してください。`, "err"); return; }
+  if (r && r.error){ svMsg(`ストリートビューの取得でエラーが発生しました（${r.error}）。時間をおいて再試行してください。`, "err"); return false; }
   const ev = evaluate(idx, r);
   hud(ev.walk, ev.diff, ev.bad);
   if (!r){
@@ -833,6 +893,20 @@ async function show(i){
     else svMsg("");
   }
   prefetch(idx, tok);
+  return !!r && ev.showable;
+}
+
+/* スキップ：from から dir 方向に、表示できる最初の地点を探す（検索は課金対象外） */
+async function findTarget(from, dir){
+  const n = state.pts.length;
+  from = Math.max(0, Math.min(n - 1, from));
+  if (!CFG.skip || !state.bufs.length) return from;
+  for (let i = from; i >= 0 && i < n; i += dir){
+    const r = await lookup(i);
+    if (r && r.error) return i;                 // エラーは飛ばさず表示して知らせる
+    if (r && evaluate(i, r).showable) return i;
+  }
+  return dir > 0 ? n - 1 : 0;
 }
 
 /* 先読み：画像の有無・向きは prefetchMeta 歩先まで、画像そのものは空いているビューアの数だけ */
@@ -863,7 +937,9 @@ async function tick(){
   if (!state.playing) return;
   if (state.i >= state.pts.length - 1){ pause(); return; }
   const t0 = performance.now();
-  await show(state.i + 1);
+  const target = await findTarget(state.i + 1, +1);
+  if (!state.playing) return;
+  await show(target);
   if (!state.playing) return;
   state.timer = setTimeout(tick, Math.max(0, CFG.intervalMs - (performance.now() - t0)));
 }
@@ -913,9 +989,10 @@ $("#bSwap").onclick = () => setMain(document.body.dataset.main === "sv" ? "map" 
 
 /* ---------- UI wiring ---------- */
 const dlg = $("#setup");
-function openSetup(){ $("#setupErr").textContent = ""; $("#expIn").value = sGet(CFG.expStorage); $("#keyIn").value = sGet(CFG.keyStorage); $("#keySave").checked = !!sGet(CFG.keyStorage); dlg.showModal(); }
+function openSetup(){ $("#setupErr").textContent = ""; $("#expIn").value = sGet(CFG.expStorage) || CFG.defaultProxy; $("#codeIn").value = sGet(CFG.codeStorage); $("#codeSave").checked = !!sGet(CFG.codeStorage); $("#keyIn").value = sGet(CFG.keyStorage); $("#keySave").checked = !!sGet(CFG.keyStorage); dlg.showModal(); }
 $("#btnSetup").onclick = openSetup;
 $("#bCancel").onclick = () => dlg.close();
+$("#bTest").onclick = connectionTest;
 const drop = $("#drop");
 drop.onclick = () => $("#fileIn").click();
 drop.onkeydown = e => { if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#fileIn").click(); } };
@@ -945,9 +1022,13 @@ $("#bStart").onclick = async () => {
     } else if (state.pendingFile){ await loadRouteFile(state.pendingFile); state.pendingFile = null; $("#dropName").textContent = ""; }
     else if (!state.raw.length){ err.textContent = "ルートファイルを選ぶか、経路リンクを貼ってください。"; return; }
     sSet(CFG.keyStorage, $("#keySave").checked ? key : "");
+    const code = $("#codeIn").value.trim();
+    sSet(CFG.codeStorage, $("#codeSave").checked ? code : "");
+    let useKey = key;
+    if (!useKey && code && !state.sv){ err.textContent = "合言葉を確認しています…"; useKey = await keyFromCode(code); err.textContent = ""; }
     dlg.close();
-    if (key && !state.sv){ svMsg("ストリートビューを準備しています…"); await initStreetView(key); }
-    else if (!key && !state.sv) svMsg("APIキーを設定すると、ここにストリートビューが表示されます");
+    if (useKey && !state.sv){ svMsg("ストリートビューを準備しています…"); await initStreetView(useKey); }
+    else if (!useKey && !state.sv) svMsg("APIキーか合言葉を設定すると、ここにストリートビューが表示されます");
   }catch(e2){
     if (!dlg.open) dlg.showModal();
     err.textContent = e2.message;
@@ -955,19 +1036,21 @@ $("#bStart").onclick = async () => {
 };
 
 $("#bPlay").onclick = () => state.playing ? pause() : play();
-$("#bPrev").onclick = () => { if (!state.pts.length) return; pause(); show(state.i - 1); };
-$("#bNext").onclick = () => { if (!state.pts.length) return; pause(); show(state.i + 1); };
+const step = async dir => { if (!state.pts.length) return; pause(); show(await findTarget(state.i + dir, dir)); };
+$("#bPrev").onclick = () => step(-1);
+$("#bNext").onclick = () => step(+1);
 $("#sSpeed").onchange = e => { CFG.intervalMs = +e.target.value; };
 $("#sStep").onchange = e => { CFG.stepM = +e.target.value; if (state.raw.length){ pause(); rebuild(true); } };
 $("#sMismatch").onchange = e => { CFG.mismatchMode = e.target.value; if (state.pts.length && state.bufs.length) show(state.i); };
+$("#cSkip").onchange = e => { CFG.skip = e.target.checked; };
 $("#cFollow").onchange = e => { state.follow = e.target.checked; };
 
 document.addEventListener("keydown", e => {
   if (dlg.open || !state.pts.length) return;
   if (["INPUT","SELECT","TEXTAREA"].includes(document.activeElement.tagName)) return;
   if (e.key === " "){ e.preventDefault(); state.playing ? pause() : play(); }
-  else if (e.key === "ArrowRight"){ pause(); show(state.i + 1); }
-  else if (e.key === "ArrowLeft"){ pause(); show(state.i - 1); }
+  else if (e.key === "ArrowRight") step(+1);
+  else if (e.key === "ArrowLeft") step(-1);
 });
 
 new ResizeObserver(() => { drawProfile(); map.invalidateSize(); }).observe(document.querySelector(".app"));
@@ -981,9 +1064,12 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
 /* ---------- boot ---------- */
 (async () => {
   setMain(sGet(CFG.mainStorage) === "map" ? "map" : "sv");
-  const k = sGet(CFG.keyStorage);
+  const k = sGet(CFG.keyStorage), c = sGet(CFG.codeStorage);
   openSetup();
-  if (k){ try{ await initStreetView(k); }catch(e){ svMsg(e.message, "err"); } }
+  try{
+    if (k) await initStreetView(k);
+    else if (c) await initStreetView(await keyFromCode(c));
+  }catch(e){ svMsg(e.message, "err"); }
 })();
 </script>
 </body>
