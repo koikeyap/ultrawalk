@@ -117,6 +117,8 @@ body[data-main="map"] #svPane {grid-area:sub}
   background:rgba(22,33,28,.8); color:#F2F5F3; font-size:15px; line-height:1.5; pointer-events:none;
 }
 .caption[hidden]{display:none}
+.caption .tag{display:inline-block; font-size:11px; padding:0 6px; margin-right:6px; border-radius:4px;
+  background:rgba(255,255,255,.18); vertical-align:1px}
 .spot{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:14px;
   background:var(--panel);border:2px solid var(--c);box-shadow:0 1px 2px rgba(0,0,0,.25)}
 .ahead{margin:8px 0 2px; display:grid; gap:4px}
@@ -170,7 +172,7 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
   <section class="panel" aria-label="操作パネル">
     <div class="phead">
       <span id="fileName">寄り道ウォーカー</span>
-      <small id="ver" style="color:var(--muted);font-size:11px">v2026-09-22f</small>
+      <small id="ver" style="color:var(--muted);font-size:11px">v2026-09-22h</small>
       <button id="btnSetup" type="button">ルート・キー</button>
     </div>
     <div class="readout" aria-live="polite">
@@ -230,6 +232,7 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
           </select>
         </label>
         <button id="bRefetch" type="button">再取得</button>
+        <button id="bClearCache" type="button">保存データを消去</button>
       </div>
       <div id="poiStatus" class="status"></div>
     </div>
@@ -349,6 +352,7 @@ const CFG = {
   aiWindowM: 1500,      // AI案内をまとめて作る区間の長さ
   guideMode: "template",// off / template / ai
   turnGuide: false,     // 曲がり角の案内（初期はオフ）
+  areaDetail: false,    // 町名が変わるたびの案内（初期はオフ。市区町村の変化だけ案内）
   voice: false,
   waitSpeech: true,
   catStorage: "yorimichi.cats",
@@ -1228,10 +1232,49 @@ function placeOnRoute(p){
   p.d = d; p.offset = bd; p.side = bd < 15 ? "沿道" : (rel > 0 ? "右" : "左");
 }
 
+/* ---------- 端末内の保存（IndexedDB）：スポット・地名・市の紹介を、再読み込みや更新後も使い回す ----------
+   同じサイト（koikeyap.github.io）である限り、HTMLを更新しても消えない。使えない環境では保存しないだけ。 */
+state.tiles = new Map();
+const idb = (() => {
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    const r = indexedDB.open("yorimichi", 1);
+    r.onupgradeneeded = () => { for (const n of ["tiles", "areas", "wiki"]) if (!r.result.objectStoreNames.contains(n)) r.result.createObjectStore(n); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  }));
+  const tx = async (store, mode, fn) => {
+    const db = await open();
+    return new Promise((res, rej) => { const t = db.transaction(store, mode); const out = fn(t.objectStore(store)); t.oncomplete = () => res(out && out.result); t.onerror = () => rej(t.error); });
+  };
+  return {
+    get: (st, k) => tx(st, "readonly", s => s.get(k)).catch(() => undefined),
+    put: (st, k, v) => tx(st, "readwrite", s => s.put(v, k)).catch(() => {}),
+    clear: st => tx(st, "readwrite", s => s.clear()).catch(() => {}),
+    entries: async st => {
+      try{
+        const db = await open();
+        return await new Promise((res, rej) => {
+          const out = [], req = db.transaction(st, "readonly").objectStore(st).openCursor();
+          req.onsuccess = () => { const c = req.result; if (c){ out.push([c.key, c.value]); c.continue(); } else res(out); };
+          req.onerror = () => rej(req.error);
+        });
+      }catch(e){ return []; }
+    }
+  };
+})();
+const TILE_TTL_MS = 30 * 24 * 3600 * 1000;   // スポットは30日で取り直す（OSMは更新されるため）
+state.cacheReady = (async () => {
+  let n = 0;
+  for (const [k, v] of await idb.entries("tiles")){
+    if (v && Date.now() - v.t < TILE_TTL_MS){ state.tiles.set(k, { st: "ok", els: v.els }); n++; }
+  }
+  state.cachedTiles = n;
+})();
+
 /* スポットは約2km四方のタイル単位で取得してキャッシュする。
    ルート候補どうしで重なるタイルは1回しか取らないので、候補を比べても負荷が増えにくい。 */
 const TILE_LAT = 0.02, TILE_LON = 0.025;
-state.tiles = new Map();   // key -> { st: "ok" | "err", els: [] }
+state.tiles = state.tiles || new Map();   // key -> { st: "ok" | "err", els: [] }
 const tileKey = (lat, lon) => `${Math.floor(lat / TILE_LAT)}_${Math.floor(lon / TILE_LON)}`;
 function tilesFor(grid, R){
   const keys = [], seen = new Set();
@@ -1328,7 +1371,8 @@ function spotStatus(msg){
   if (pend > 0){ st.textContent = `スポットを取得中… ${ok + err}/${keys.length}${err ? `（失敗 ${err}）` : ""}`; return; }
   const counts = Object.keys(POI_CATS).map(k => `${POI_CATS[k].emoji}${state.pois.filter(p => p.cat === k).length}`).join(" ");
   const lastErr = err ? (state.tiles.get(keys.find(k => (state.tiles.get(k) || {}).st === "err")) || {}).err : "";
-  st.textContent = `経路から${CFG.poiRadiusM}m以内：${counts}` + (err ? `／${err}区画は取得失敗（${lastErr}）。「再取得」で失敗分だけ取り直せます` : "") + "（© OpenStreetMap contributors）";
+  const fromSaved = state.cachedTiles ? `・端末に保存済み${state.cachedTiles}区画を利用` : "";
+  st.textContent = `経路から${CFG.poiRadiusM}m以内：${counts}${fromSaved}` + (err ? `／${err}区画は取得失敗（${lastErr}）。「再取得」で失敗分だけ取り直せます` : "") + "（© OpenStreetMap contributors）";
 }
 function queueTiles(keys){
   const want = keys.filter(k => !tileOk(k) && (state.tiles.get(k) || {}).st !== "err");
@@ -1336,6 +1380,8 @@ function queueTiles(keys){
   if (!tileRunner) tileRunner = runTileQueue().finally(() => { tileRunner = null; });
 }
 async function runTileQueue(){
+  await state.cacheReady;
+  refreshSpots(); (state.cands || []).forEach(candStats); renderCands();
   while (state.tileQueue.length){
     const k = state.tileQueue.shift();
     if (tileOk(k)) continue;
@@ -1343,6 +1389,7 @@ async function runTileQueue(){
     try{
       const j = await overpassFetch(tileQuery(k));
       state.tiles.set(k, { st: "ok", els: j.elements || [] });
+      idb.put("tiles", k, { t: Date.now(), els: j.elements || [] });
     }catch(e){ state.tiles.set(k, { st: "err", els: [], err: e.message }); }
     refreshSpots();
     (state.cands || []).forEach(candStats); renderCands();
@@ -1445,6 +1492,12 @@ function initSpotUI(){
   syncLayers();
   $("#sRadius").onchange = e => { CFG.poiRadiusM = +e.target.value; if (state.grid.length) fetchSpots(); };
   $("#bRefetch").onclick = () => { if (state.grid.length) refetchFailed(); };
+  $("#bClearCache").onclick = async () => {
+    if (!confirm("端末に保存したスポット・地名のデータを消去します。次回は取り直しになります。よろしいですか？")) return;
+    await Promise.all(["tiles", "areas", "wiki"].map(idb.clear));
+    state.tiles.clear(); state.areas.clear(); state.cityWiki.clear(); state.cachedTiles = 0;
+    if (state.grid.length) fetchSpots();
+  };
   $("#sGuide").onchange = e => { CFG.guideMode = e.target.value; guideStatus(); if (CFG.guideMode === "ai" && state.pts.length) aiPrefetch(state.pts[state.i].d); };
   $("#cVoice").onchange = e => { CFG.voice = e.target.checked; if (CFG.voice) unlockSpeech(); else if (window.speechSynthesis) speechSynthesis.cancel(); };
   $("#cWait").onchange = e => { CFG.waitSpeech = e.target.checked; };
@@ -1548,6 +1601,7 @@ function buildEvents(){
   const old = new Map(state.events.map(x => [x.id, x]));
   for (const x of ev){ const o = old.get(x.id); if (o){ x.ai = o.ai; x.spoken = o.spoken; } }
   state.events = ev;
+  guideStatus();
 }
 function eventOn(e){
   if (e.type === "turn") return CFG.turnGuide;
@@ -1611,7 +1665,8 @@ function afterMove(fromD, toD){
     const prio = hit.filter(e => e.prio), rest = hit.filter(e => !e.prio);
     const pick = prio.length ? prio : rest.slice(-1);
     const text = pick.map(textFor).join(" ");
-    announce(text, prio.length > 0);
+    const usedAI = CFG.guideMode === "ai" && pick.some(e => e.ai);
+    announce(text, prio.length > 0, usedAI ? "AI" : "定型");
   }
   if (CFG.guideMode === "ai") aiPrefetch(toD);
 }
@@ -1644,19 +1699,46 @@ async function areaPrefetch(d){
       if (state.areas.has(x)) continue;
       const pt = pointAt(x);
       state.areas.set(x, null);
+      const ck = `${pt.lat.toFixed(4)},${pt.lon.toFixed(4)}`;
+      const saved = await idb.get("areas", ck);
+      if (saved){ state.areas.set(x, saved); if (saved.city) cityIntro(saved.city, saved.pref); continue; }
       try{
         const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&accept-language=ja&lat=${pt.lat.toFixed(5)}&lon=${pt.lon.toFixed(5)}`);
         if (r.ok){
           const a = (await r.json()).address || {};
           const city = a.city || a.town || a.village || a.municipality || "";
           const ward = a.city_district || "";
+          const pref = a.province || a.state || "";
           const sub = a.suburb || a.quarter || a.neighbourhood || "";
-          state.areas.set(x, { city, ward, sub });
+          state.areas.set(x, { city, ward, sub, pref });
+          idb.put("areas", ck, { city, ward, sub, pref });
+          if (city) cityIntro(city, pref);
         }
       }catch(e){}
       await new Promise(r => setTimeout(r, 1100));   // Nominatimの利用ルール（1秒1回まで）
     }
   } finally { areaBusy = false; }
+}
+/* 市区町村に入ったときの紹介：Wikipediaの要約の最初の1文（同名の市は都道府県名付きで引き直す） */
+state.cityWiki = new Map();
+async function cityIntro(city, pref){
+  if (state.cityWiki.has(city)) return;
+  state.cityWiki.set(city, null);
+  const saved = await idb.get("wiki", city);
+  if (saved !== undefined){ state.cityWiki.set(city, saved); return; }
+  const get = async t => {
+    const r = await fetchT(`https://ja.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(t)}`, {}, 15000);
+    return r.ok ? r.json() : null;
+  };
+  try{
+    let j = await get(city);
+    if (j && j.type === "disambiguation" && pref) j = await get(`${city} (${pref})`);
+    if (!j || j.type === "disambiguation") return;
+    const first = String(j.extract || "").split("。")[0];
+    const val = first && first.length <= 100 ? first + "。" : null;
+    state.cityWiki.set(city, val);
+    idb.put("wiki", city, val);
+  }catch(e){}
 }
 function areaCheck(d){
   const S = CFG.areaStepM;
@@ -1666,14 +1748,23 @@ function areaCheck(d){
   state.lastArea = a;
   if (!prev) return;
   let text = "";
-  if (a.city !== prev.city) text = `${a.city}${a.ward ? a.ward : ""}${a.sub ? `の${a.sub}` : ""}に入りました。`;
+  if (a.city !== prev.city){
+    text = `${a.city}${a.ward || ""}に入りました。`;
+    const w = state.cityWiki.get(a.city);
+    if (w) text += `${w}（Wikipediaより）`;
+  }
   else if (a.ward && a.ward !== prev.ward) text = `${a.ward}に入りました。`;
-  else if (a.sub && prev.sub && a.sub !== prev.sub) text = `${a.sub}に入りました。`;
-  if (text) announce(text, false);
+  else if (CFG.areaDetail && a.sub && prev.sub && a.sub !== prev.sub) text = `${a.sub}に入りました。`;
+  if (text) announce(text, false, "地名");
 }
 
 /* ---------- 字幕と読み上げ ---------- */
-function caption(t){ const c = $("#caption"); if (!c) return; c.hidden = !t; c.textContent = t || ""; }
+function caption(t, src){
+  const c = $("#caption"); if (!c) return;
+  c.hidden = !t;
+  const esc = x => String(x).replace(/[<>&]/g, y => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[y]));
+  c.innerHTML = t ? (src ? `<span class="tag">${esc(src)}</span>` : "") + esc(t) : "";
+}
 let jaVoice = null;
 function pickVoice(){
   if (!window.speechSynthesis) return;
@@ -1689,10 +1780,10 @@ function unlockSpeech(){   // iPhoneは最初の読み上げをボタン操作�
 /* 読み上げ中に次の案内が来たら、途中で切らずに新しい方を飛ばす。
    チェックポイント（prio）だけは飛ばさず、今の読み上げの後に続けて読む。 */
 function isSpeaking(){ return !!(window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending)); }
-function announce(text, prio){
+function announce(text, prio, src){
   if (!text) return;
   if (CFG.voice && isSpeaking() && !prio) return;      // 字幕も今の案内のまま残す
-  caption(text); say(text);
+  caption(text, src); say(text);
 }
 function say(text){
   if (!CFG.voice || !window.speechSynthesis || !text) return;
@@ -1711,7 +1802,12 @@ async function waitForSpeech(){
 function guideStatus(msg){
   const el = $("#guideStatus"); if (!el) return;
   if (msg){ el.textContent = msg; return; }
-  if (CFG.guideMode === "ai") el.textContent = state.code ? "AI案内：先の区間の案内文を順に作ります" : "AI案内には合言葉が必要です（未設定のため定型文で案内します）";
+  if (CFG.guideMode === "ai"){
+    if (!state.code){ el.textContent = "AI案内には合言葉が必要です（未設定のため定型文で案内します）"; return; }
+    const made = state.events.filter(e => e.ai).length;
+    const target = state.events.filter(e => eventOn(e) && e.type !== "start").length;
+    el.textContent = `AI案内：作成済み ${made}件／案内予定 ${target}件` + (target === 0 ? "（案内する地点がまだありません。スポットの取得を待つか、曲がり角の案内をオンにしてください）" : "");
+  }
   else el.textContent = "";
 }
 function aiFacts(e){
