@@ -12,7 +12,7 @@
 /* ===== Tokens ===== */
 :root{
   --bg:#E6ECE7; --panel:#F6F8F5; --ink:#17251F; --muted:#5A6B63; --line:#C4D0C8;
-  --route:#E4572E; --done:#2F6B52; --elev:#B7CDBF; --nosv:#8C9A93;
+  --route:#E4572E; --done:#2F6B52; --elev:#B7CDBF; --nosv:#8C9A93; --warn:#C98A0B;
   --num:"Barlow Semi Condensed","Zen Kaku Gothic New",system-ui,sans-serif;
   --txt:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
   box-sizing:border-box;
@@ -21,167 +21,204 @@
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
     --bg:#16211C; --panel:#1E2B25; --ink:#E4ECE7; --muted:#9DB0A6; --line:#34463D;
-    --route:#F06B45; --done:#6FC19A; --elev:#35503F; --nosv:#6F7E77;
+    --route:#F06B45; --done:#6FC19A; --elev:#35503F; --nosv:#6F7E77; --warn:#E8B23A;
   }
 }
 :root[data-theme="dark"]{
   --bg:#16211C; --panel:#1E2B25; --ink:#E4ECE7; --muted:#9DB0A6; --line:#34463D;
-  --route:#F06B45; --done:#6FC19A; --elev:#35503F; --nosv:#6F7E77;
+  --route:#F06B45; --done:#6FC19A; --elev:#35503F; --nosv:#6F7E77; --warn:#E8B23A;
 }
 *,*::before,*::after{box-sizing:inherit}
 html,body{height:100%;margin:0}
-body{
-  background:var(--bg); color:var(--ink); font-family:var(--txt); font-size:15px; line-height:1.5;
-  display:grid; grid-template-rows:auto 1fr auto; overflow:hidden;
-}
+body{background:var(--bg); color:var(--ink); font-family:var(--txt); font-size:14px; line-height:1.45; overflow:hidden}
 button,select,input{font:inherit;color:inherit}
-button{
-  background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:6px 12px; cursor:pointer;
-}
+button{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:6px 10px; cursor:pointer}
 button:hover{border-color:var(--muted)}
-button.primary{background:var(--done); color:#fff; border-color:var(--done); min-width:6.5em; font-weight:700}
+button.primary{background:var(--done); color:#fff; border-color:var(--done); font-weight:700}
 :focus-visible{outline:2px solid var(--route); outline-offset:2px}
-select{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:5px 6px}
+select{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:4px 4px; min-width:0}
 
-/* ===== Header ===== */
-.bar{display:flex; align-items:baseline; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line)}
-.bar h1{font-size:17px; margin:0; font-weight:700; letter-spacing:.02em}
-.bar #fileName{color:var(--muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1}
+/* ===== Layout =====
+   横長:  [ main | sub   ]      縦長: [   main    ]
+          [ main | panel ]            [panel | sub]           */
+.app{
+  height:100%; display:grid;
+  grid-template-columns:minmax(0,3fr) minmax(300px,2fr);
+  grid-template-rows:minmax(0,1fr) auto;
+  grid-template-areas:"main sub" "main panel";
+}
+@media (orientation:portrait){
+  .app{
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    grid-template-rows:minmax(0,1fr) minmax(0,1fr);
+    grid-template-areas:"main main" "panel sub";
+  }
+}
+body[data-main="sv"]  #svPane {grid-area:main}
+body[data-main="sv"]  #mapPane{grid-area:sub}
+body[data-main="map"] #mapPane{grid-area:main}
+body[data-main="map"] #svPane {grid-area:sub}
+.pane{position:relative; min-height:0; min-width:0; overflow:hidden}
+#mapPane{border-left:1px solid var(--line); border-bottom:1px solid var(--line)}
+@media (orientation:portrait){ #mapPane,#svPane{border-left:0} #mapPane{border-bottom:0} }
+#map{position:absolute; inset:0}
+.leaflet-container{background:var(--bg); font-family:var(--txt)}
 
-/* ===== Stage ===== */
-.stage{display:grid; grid-template-columns:3fr 2fr; min-height:0}
-.sv{position:relative; min-height:0; background:#2b3531}
-#pano{position:absolute; inset:0}
+/* Street View: 複数バッファを重ね、前面だけ見せる（切替は即時、トランジションなし） */
+#svPane{background:#2b3531}
+#panoStack{position:absolute; inset:0}
+.buf{position:absolute; inset:0; opacity:0; pointer-events:none; z-index:0}
+.buf.front{opacity:1; pointer-events:auto; z-index:1}
 .sv-msg{
   position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center;
-  padding:24px; color:#E9EFEB; background:rgba(22,33,28,.72); font-size:14px; z-index:2;
+  padding:24px; color:#E9EFEB; background:rgba(22,33,28,.8); font-size:14px; z-index:4;
 }
-.sv-msg.err{background:rgba(120,30,20,.8)}
 .sv-msg[hidden]{display:none}
-.map{min-height:0; border-left:1px solid var(--line)}
-.leaflet-container{background:var(--bg); font-family:var(--txt)}
+.sv-msg.err{background:rgba(120,30,20,.85)}
+.sv-msg.dim{background:rgba(22,33,28,.5); align-items:flex-end; padding-bottom:52px; pointer-events:none}
+.hud{
+  position:absolute; left:8px; bottom:8px; z-index:5; padding:3px 9px; border-radius:6px;
+  background:rgba(22,33,28,.72); color:#E9EFEB; font-family:var(--num); font-size:13px; pointer-events:none;
+}
+.hud .bad{color:#F2C14E}
 
 /* position marker */
 .me{width:26px;height:26px;display:grid;place-items:center}
-.me i{
-  display:block; width:0; height:0; border-left:8px solid transparent; border-right:8px solid transparent;
-  border-bottom:20px solid var(--route); filter:drop-shadow(0 0 2px #fff) drop-shadow(0 0 1px #fff);
-}
+.me i{display:block;width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;
+  border-bottom:20px solid var(--route);filter:drop-shadow(0 0 2px #fff) drop-shadow(0 0 1px #fff)}
 
-/* ===== Dock ===== */
-.dock{border-top:1px solid var(--line); background:var(--panel); padding:8px 16px 10px}
-.readout{display:flex; flex-wrap:wrap; gap:4px 22px; align-items:baseline; font-family:var(--num)}
-.readout b{font-size:24px; font-weight:600; font-variant-numeric:tabular-nums}
-.readout small{color:var(--muted); font-size:13px; font-family:var(--txt)}
-.readout .updown{color:var(--muted); font-size:14px}
-#profile{display:block; width:100%; height:96px; margin:4px 0 6px; cursor:ew-resize; touch-action:none}
-.controls{display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; font-size:13px}
-.controls label{display:flex; gap:6px; align-items:center; color:var(--muted)}
-.req{margin-left:auto; color:var(--muted); font-family:var(--num); font-size:13px}
+/* ===== Panel ===== */
+.panel{grid-area:panel; background:var(--panel); padding:10px 12px; overflow-y:auto; min-height:0; min-width:0}
+.phead{display:flex; gap:8px; align-items:center; margin-bottom:6px}
+.phead #fileName{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700}
+.readout{display:grid; grid-template-columns:repeat(auto-fit,minmax(88px,1fr)); gap:2px 12px; font-family:var(--num)}
+.readout b{font-size:22px; font-weight:600; font-variant-numeric:tabular-nums}
+.readout small{color:var(--muted); font-size:12px; font-family:var(--txt)}
+.updown{color:var(--muted); font-size:12px; margin-top:2px}
+#profile{display:block; width:100%; height:78px; margin:6px 0; cursor:ew-resize; touch-action:none}
+.transport{display:flex; gap:6px; margin-bottom:8px}
+.transport button{padding:8px 10px}
+.transport .primary{flex:1}
+.opts{display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:6px 12px; font-size:13px}
+.opts label{display:flex; justify-content:space-between; align-items:center; gap:6px; color:var(--muted)}
+.opts label.chk{justify-content:flex-start}
+.legend{color:var(--muted); font-size:12px; margin-top:8px}
+.legend i{display:inline-block; width:8px; height:8px; border-radius:50%; margin:0 3px 0 6px; vertical-align:middle}
+#bSwap,#bExport{width:100%; margin-top:8px}
+@media (orientation:portrait){
+  .panel{padding:8px 10px}
+  .readout b{font-size:18px}
+  #profile{height:60px}
+}
 
 /* ===== Setup dialog ===== */
-dialog{
-  border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink);
-  width:min(520px, calc(100vw - 32px)); padding:22px 24px;
-}
+dialog{border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink);
+  width:min(520px, calc(100vw - 32px)); padding:22px 24px}
 dialog::backdrop{background:rgba(10,18,14,.5)}
 dialog h2{font-size:18px; margin:0 0 4px}
 dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
 .field{margin:0 0 16px}
 .field > span{display:block; font-weight:700; font-size:14px; margin-bottom:6px}
-.field input[type=password],.field input[type=text]{
-  width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg);
-}
-.drop{
-  border:2px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted);
-  cursor:pointer; font-size:14px;
-}
+.field input[type=password]{width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg)}
+.drop{border:2px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); cursor:pointer}
 .drop.over{border-color:var(--route); color:var(--ink)}
 .drop strong{color:var(--ink)}
 .row{display:flex; gap:10px; justify-content:flex-end; align-items:center; margin-top:8px}
 .err-line{color:var(--route); font-size:13px; min-height:1.4em; margin:0 0 6px}
+.field input[type=url]{width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg)}
+.field small{display:block; color:var(--muted); font-size:12px; margin-top:4px; max-width:60ch}
+.or{color:var(--muted); font-size:12px; text-align:center; margin:-6px 0 10px}
+.wp{width:10px;height:10px;border-radius:50%;background:var(--panel);border:2px solid var(--route)}
 .check{display:flex; gap:6px; align-items:center; font-size:13px; color:var(--muted); margin-top:6px}
-
-/* ===== Narrow screens ===== */
-@media (max-width:760px){
-  .stage{grid-template-columns:1fr; grid-template-rows:1.3fr 1fr}
-  .map{border-left:0; border-top:1px solid var(--line)}
-  .readout b{font-size:20px}
-  #profile{height:72px}
-  .req{margin-left:0; width:100%}
-}
-@media (prefers-reduced-motion:reduce){ *{scroll-behavior:auto!important} }
 </style>
 </head>
-<body>
-
-<header class="bar">
-  <h1>ルート下見ウォーカー</h1>
-  <span id="fileName">GPXが未読み込みです</span>
-  <button id="btnSetup" type="button">GPX・APIキー</button>
-</header>
-
-<main class="stage">
-  <section class="sv" aria-label="ストリートビュー">
-    <div id="pano"></div>
+<body data-main="sv">
+<div class="app">
+  <section id="svPane" class="pane" aria-label="ストリートビュー">
+    <div id="panoStack"></div>
     <div id="svMsg" class="sv-msg">APIキーを設定すると、ここにストリートビューが表示されます</div>
+    <div id="hud" class="hud" hidden></div>
   </section>
-  <section id="map" class="map" aria-label="地図"></section>
-</main>
 
-<section class="dock">
-  <div class="readout" aria-live="polite">
-    <div><b id="rDist">0.00</b><small> / <span id="rTotal">0.00</span> km</small></div>
-    <div><b id="rEle">—</b><small> m</small></div>
-    <div><b id="rGrade">—</b><small> % 勾配</small></div>
+  <section id="mapPane" class="pane" aria-label="地図"><div id="map"></div></section>
+
+  <section class="panel" aria-label="操作パネル">
+    <div class="phead">
+      <span id="fileName">ルートが未読み込みです</span>
+      <button id="btnSetup" type="button">ルート・キー</button>
+    </div>
+    <div class="readout" aria-live="polite">
+      <div><b id="rDist">0.00</b><small> / <span id="rTotal">0.00</span> km</small></div>
+      <div><b id="rEle">—</b><small> m</small></div>
+      <div><b id="rGrade">—</b><small> %</small></div>
+    </div>
     <div class="updown">累積 ↑<span id="rUp">0</span> m ↓<span id="rDown">0</span> m（推定）</div>
-  </div>
-  <canvas id="profile" aria-label="標高グラフ。ドラッグで位置を移動"></canvas>
-  <div class="controls">
-    <button id="bPrev" type="button" aria-label="1歩戻る">◀</button>
-    <button id="bPlay" type="button" class="primary">再生</button>
-    <button id="bNext" type="button" aria-label="1歩進む">▶</button>
-    <label>表示間隔
-      <select id="sSpeed">
-        <option value="600">0.6秒</option>
-        <option value="1200" selected>1.2秒</option>
-        <option value="2000">2秒</option>
-        <option value="3500">3.5秒</option>
-      </select>
-    </label>
-    <label>歩幅
-      <select id="sStep">
-        <option value="10">10 m</option>
-        <option value="20" selected>20 m</option>
-        <option value="30">30 m</option>
-        <option value="50">50 m</option>
-        <option value="100">100 m</option>
-      </select>
-    </label>
-    <label><input type="checkbox" id="cFollow" checked> 地図を追従</label>
-    <span id="rReq" class="req"></span>
-  </div>
-</section>
+    <canvas id="profile" aria-label="標高グラフ。ドラッグで位置を移動"></canvas>
+    <div class="transport">
+      <button id="bPrev" type="button" aria-label="1歩戻る">◀</button>
+      <button id="bPlay" type="button" class="primary">再生</button>
+      <button id="bNext" type="button" aria-label="1歩進む">▶</button>
+    </div>
+    <div class="opts">
+      <label>表示間隔
+        <select id="sSpeed">
+          <option value="600">0.6秒</option>
+          <option value="1200" selected>1.2秒</option>
+          <option value="2000">2秒</option>
+          <option value="3500">3.5秒</option>
+        </select>
+      </label>
+      <label>歩幅
+        <select id="sStep">
+          <option value="50" selected>50 m</option>
+          <option value="100">100 m</option>
+          <option value="200">200 m</option>
+          <option value="300">300 m</option>
+        </select>
+      </label>
+      <label>向き不一致
+        <select id="sMismatch">
+          <option value="hide" selected>隠す</option>
+          <option value="dim">薄く表示</option>
+          <option value="show">表示</option>
+        </select>
+      </label>
+      <label class="chk"><input type="checkbox" id="cFollow" checked> 地図を追従</label>
+    </div>
+    <button id="bSwap" type="button">メインを地図にする</button>
+    <button id="bExport" type="button">GPXで保存</button>
+    <div class="legend">地図の点<i style="background:var(--nosv)"></i>画像なし<i style="background:var(--warn)"></i>向き不一致</div>
+  </section>
+</div>
 
 <dialog id="setup">
   <h2>ルートを読み込む</h2>
-  <p>GPXだけでも地図と標高グラフは使えます。ストリートビューを表示するには Google Maps JavaScript API のキーが必要です。</p>
-
+  <p>GPX・KML・KMZに対応しています。ルートだけでも地図と標高グラフは使えます。ストリートビューを表示するには Google Maps JavaScript API のキーが必要です。</p>
   <div class="field">
-    <span>GPXファイル</span>
+    <span>ルートファイル（GPX / KML / KMZ）</span>
     <div id="drop" class="drop" tabindex="0" role="button">
-      <strong>クリックして選択</strong>、またはここにドロップ
+      <strong>タップして選択</strong>、またはここにドロップ
       <div id="dropName" style="margin-top:6px"></div>
     </div>
-    <input id="fileIn" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden>
+    <input id="fileIn" type="file" accept=".gpx,.kml,.kmz,application/gpx+xml,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz,application/xml,text/xml" hidden>
   </div>
-
+  <div class="or">または</div>
+  <div class="field">
+    <span>Google マップの経路リンク</span>
+    <input id="linkIn" type="url" inputmode="url" autocomplete="off" placeholder="https://www.google.com/maps/dir/...">
+    <small>出発地・経由地・目的地と、ドラッグで追加した経由点を読み取り、OpenStreetMapの徒歩ルートで引き直します。短縮リンク（maps.app.goo.gl）は、一度ブラウザで開いてアドレス欄の長いURLを貼ってください。</small>
+    <label class="check">経路エンジン
+      <select id="sEngine">
+        <option value="brouter" selected>BRouter（標高付き）</option>
+        <option value="osrm">OSRM 徒歩（標高なし）</option>
+      </select>
+    </label>
+  </div>
   <div class="field">
     <span>Google Maps APIキー（任意）</span>
     <input id="keyIn" type="password" autocomplete="off" placeholder="AIza...">
     <label class="check"><input id="keySave" type="checkbox"> このブラウザに保存する</label>
   </div>
-
   <div id="setupErr" class="err-line"></div>
   <div class="row">
     <button id="bCancel" type="button">閉じる</button>
@@ -190,34 +227,40 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
 </dialog>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 "use strict";
 /* ============================================================
    設定値（ここを変えれば挙動を調整できます）
    ============================================================ */
 const CFG = {
-  stepM: 20,          // 経路を何mごとに区切って「1歩」とするか
-  intervalMs: 1200,   // 再生時の1歩あたりの表示間隔
-  radiusM: 30,        // 各地点からストリートビューを探す半径
-  lookAheadM: 30,     // 視線方向を決めるために何m先を見るか
-  prefetch: 3,        // 再生中に先読みする歩数
-  gradeWindowM: 50,   // 勾配を計算する前後の距離
-  smoothM: 60,        // 累積標高計算用の平滑化幅
-  keyStorage: "routePreviewWalker.apiKey"
+  stepM: 50,            // 1歩の距離
+  intervalMs: 1200,     // 再生時の1歩あたりの表示間隔
+  radiusM: 30,          // 各地点からストリートビューを探す半径
+  headBackM: 10,        // 進行方向の計算：何m手前から
+  headAheadM: 25,       //                 何m先までを結ぶか（元の線で計算）
+  prefetchMeta: 12,     // 画像の有無・向きを先に調べる歩数（この検索は課金対象外）
+  buffers: 4,           // 画像を裏で読み込んでおくビューアの数（現在+先読み3）
+  gradeWindowM: 100,    // 勾配を計算する前後の距離
+  smoothM: 100,         // 累積標高計算用の平滑化幅
+  alignTolDeg: 35,      // 進行方向と「画像地点の道の向き」の許容差（度）
+  mismatchMode: "hide", // 向きが合わない画像: hide / dim / show
+  keyStorage: "routePreviewWalker.apiKey",
+  mainStorage: "routePreviewWalker.main"
 };
 
 const $ = s => document.querySelector(s);
 const state = {
-  raw: [], pts: [], ele: [], hasEle: false, name: "",
+  raw: [], rawCum: [], pts: [], ele: [], hasEle: false, name: "",
   i: 0, heading: 0, playing: false, timer: null,
-  SV: null, sv: null, pano: null, curPano: null,
-  cache: new Map(), reqCount: 0, token: 0, follow: true,
-  up: 0, down: 0, pendingFile: null
+  SV: null, sv: null, bufs: [], front: null, useClock: 0,
+  cache: new Map(), token: 0, follow: true,
+  up: 0, down: 0, pendingFile: null, flagged: new Set()
 };
 
-/* ---------- storage (wrapped: may be unavailable) ---------- */
-function saveKey(v){ try{ v ? localStorage.setItem(CFG.keyStorage, v) : localStorage.removeItem(CFG.keyStorage); }catch(e){} }
-function loadKey(){ try{ return localStorage.getItem(CFG.keyStorage) || ""; }catch(e){ return ""; } }
+/* ---------- storage ---------- */
+function sSet(k, v){ try{ v ? localStorage.setItem(k, v) : localStorage.removeItem(k); }catch(e){} }
+function sGet(k){ try{ return localStorage.getItem(k) || ""; }catch(e){ return ""; } }
 
 /* ---------- geo ---------- */
 const toR = Math.PI / 180;
@@ -231,8 +274,19 @@ function bearing(a, b){
   const x = Math.cos(a.lat*toR)*Math.sin(b.lat*toR) - Math.sin(a.lat*toR)*Math.cos(b.lat*toR)*Math.cos((b.lon - a.lon)*toR);
   return (Math.atan2(y, x) / toR + 360) % 360;
 }
+function angDiff(a, b){ let d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; }
 
-/* ---------- GPX ---------- */
+/* ---------- parsing: GPX / KML / KMZ ---------- */
+function normalize(pts){
+  const out = [];
+  for (const q of pts){
+    const last = out[out.length - 1];
+    if (last && last.lat === q.lat && last.lon === q.lon) continue;
+    out.push({ lat: q.lat, lon: q.lon, ele: q.ele });
+  }
+  if (out.every(q => q.ele == null || q.ele === 0)) out.forEach(q => q.ele = null);
+  return out;
+}
 function parseGPX(text){
   const doc = new DOMParser().parseFromString(text, "application/xml");
   if (doc.getElementsByTagName("parsererror").length) throw new Error("GPXとして読み込めませんでした。ファイルの中身がXMLか確認してください。");
@@ -244,18 +298,171 @@ function parseGPX(text){
     if (!isFinite(lat) || !isFinite(lon)) continue;
     const e = n.getElementsByTagName("ele")[0];
     const ele = e ? parseFloat(e.textContent) : NaN;
-    const last = pts[pts.length - 1];
-    if (last && last.lat === lat && last.lon === lon) continue;
     pts.push({ lat, lon, ele: isFinite(ele) ? ele : null });
   }
-  if (pts.length < 2) throw new Error("経路の点（trkpt / rtept）が2つ以上見つかりません。");
+  const out = normalize(pts);
+  if (out.length < 2) throw new Error("経路の点（trkpt / rtept）が2つ以上見つかりません。");
   const nm = doc.getElementsByTagName("name")[0];
-  return { pts, name: nm ? nm.textContent.trim() : "" };
+  return { pts: out, name: nm ? nm.textContent.trim() : "" };
+}
+function parseKML(text){
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length) throw new Error("KMLとして読み込めませんでした。");
+  const toPt = (lon, lat, alt) => ({ lat, lon, ele: isFinite(alt) ? alt : null });
+  const ok = q => isFinite(q.lat) && isFinite(q.lon);
+  const segs = [];
+  for (const ls of Array.from(doc.getElementsByTagName("LineString"))){
+    const c = ls.getElementsByTagName("coordinates")[0];
+    if (!c) continue;
+    const seg = c.textContent.trim().split(/\s+/).map(t => { const [lon, lat, alt] = t.split(",").map(Number); return toPt(lon, lat, alt); }).filter(ok);
+    if (seg.length >= 2) segs.push(seg);
+  }
+  if (!segs.length){
+    const coords = Array.from(doc.getElementsByTagNameNS("http://www.google.com/kml/ext/2.2", "coord"));
+    const seg = coords.map(n => { const [lon, lat, alt] = n.textContent.trim().split(/\s+/).map(Number); return toPt(lon, lat, alt); }).filter(ok);
+    if (seg.length >= 2) segs.push(seg);
+  }
+  if (!segs.length) throw new Error("KMLに線（ルート）が見つかりません。マイマップでは、ルートや線を含むレイヤーを選んでエクスポートしてください。");
+  if (segs.length > 1){
+    const a = segs[0], b = segs[1];
+    const dEnd = Math.min(hav(a[a.length-1], b[0]), hav(a[a.length-1], b[b.length-1]));
+    const dStart = Math.min(hav(a[0], b[0]), hav(a[0], b[b.length-1]));
+    if (dStart < dEnd) segs[0] = a.slice().reverse();
+  }
+  const out = segs[0].slice();
+  for (let k = 1; k < segs.length; k++){
+    let sg = segs[k];
+    const end = out[out.length - 1];
+    if (hav(end, sg[sg.length - 1]) < hav(end, sg[0])) sg = sg.slice().reverse();
+    out.push(...sg);
+  }
+  let name = "";
+  const d0 = doc.getElementsByTagName("Document")[0];
+  if (d0) for (const ch of Array.from(d0.childNodes)) if (ch.nodeType === 1 && ch.localName === "name"){ name = ch.textContent.trim(); break; }
+  const pts = normalize(out);
+  if (pts.length < 2) throw new Error("KMLの線に有効な点が2つ以上ありません。");
+  return { pts, name };
+}
+async function parseRouteFile(f){
+  const ext = (f.name.split(".").pop() || "").toLowerCase();
+  if (ext === "kmz"){
+    if (!window.JSZip) throw new Error("KMZの展開ライブラリを読み込めませんでした。KMLで書き出すか、ネットワークを確認してください。");
+    const zip = await JSZip.loadAsync(await f.arrayBuffer());
+    const entry = Object.values(zip.files).find(z => !z.dir && /\.kml$/i.test(z.name));
+    if (!entry) throw new Error("KMZの中にKMLファイルが見つかりません。");
+    return parseKML(await entry.async("string"));
+  }
+  const text = await f.text();
+  if (ext === "kml" || /<kml[\s>]/i.test(text.slice(0, 2000))) return parseKML(text);
+  return parseGPX(text);
 }
 
-function resample(raw, step){
+/* ---------- Google マップの経路リンク → 経由点 → OSMで徒歩ルートを引き直す ----------
+   Googleの経路データ自体は使わず（利用規約上、Google以外の地図への表示や保存は不可）、
+   リンクに含まれる地点の座標だけを取り出してOSMベースの経路エンジンに渡す。
+   URLの内部形式は非公開仕様のため、Google側の変更で読めなくなる可能性がある。 */
+const NUM = "(-?\\d+(?:\\.\\d+)?)";
+async function waypointsFromGmapsLink(input){
+  let url;
+  try{ url = new URL(input.trim()); }catch(e){ throw new Error("リンクの形式が正しくありません。https:// から始まるURLを貼ってください。"); }
+  if (/goo\.gl$|maps\.app\.goo\.gl$/.test(url.hostname)) throw new Error("短縮リンクはこのページから展開できません。一度ブラウザで開き、アドレス欄の長いURL（/maps/dir/ を含むもの）を貼ってください。");
+  const path = decodeURIComponent(url.pathname).replace(/\+/g, " ");
+  const m = path.match(/\/maps\/dir\/(.*)$/);
+  if (!m) throw new Error("経路のリンクではないようです。Google マップで経路を表示した状態のURLを貼ってください。");
+  const parts = m[1].split("/");
+  const dataPart = parts.find(x => x.startsWith("data=")) || "";
+  const names = parts.filter(x => x && !x.startsWith("@") && !x.startsWith("data="));
+  // data内の座標：地点（!2m2!1d経度!2d緯度）とドラッグで追加した経由点（!3m4!1m2!1d経度!2d緯度）
+  const stopRe = new RegExp("!2m2!1d" + NUM + "!2d" + NUM, "g");
+  const viaRe  = new RegExp("!3m4!1m2!1d" + NUM + "!2d" + NUM, "g");
+  const dataStops = [...dataPart.matchAll(stopRe)].map(x => ({ lon: +x[1], lat: +x[2] }));
+  const vias = [...dataPart.matchAll(viaRe)].map(x => ({ lon: +x[1], lat: +x[2] }));
+  const coordRe = new RegExp("^\\s*" + NUM + "\\s*,\\s*" + NUM + "\\s*$");
+  const stops = [];
+  let di = 0;
+  for (const n of names){
+    const c = n.match(coordRe);
+    if (c){ stops.push({ lat: +c[1], lon: +c[2], label: n }); continue; }
+    if (di < dataStops.length){ stops.push({ ...dataStops[di++], label: n }); continue; }
+    stops.push({ ...(await geocode(n)), label: n });
+  }
+  if (stops.length < 2) throw new Error("出発地と目的地を読み取れませんでした。現在地を出発地にしたリンクの場合は、出発地を具体的な場所に変えてください。");
+  // 経由点は、遠回りが最小になる区間に、区間内の進み具合の順で挿入する
+  const legs = stops.slice(0, -1).map(() => []);
+  for (const v of vias){
+    let best = 0, bc = Infinity;
+    for (let k = 0; k < legs.length; k++){ const c = hav(stops[k], v) + hav(v, stops[k+1]) - hav(stops[k], stops[k+1]); if (c < bc){ bc = c; best = k; } }
+    legs[best].push(v);
+  }
+  const out = [];
+  stops.forEach((st, k) => {
+    out.push({ lat: st.lat, lon: st.lon, stop: true });
+    if (k < legs.length) legs[k].sort((a, b) => hav(st, a) - hav(st, b)).forEach(v => out.push({ lat: v.lat, lon: v.lon, stop: false }));
+  });
+  return { wps: out, name: stops.map(x => x.label).join(" → ") };
+}
+async function geocode(q){
+  const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=ja&q=" + encodeURIComponent(q));
+  if (!r.ok) throw new Error(`「${q}」の場所を調べられませんでした（${r.status}）。`);
+  const j = await r.json();
+  if (!j.length) throw new Error(`「${q}」の場所が見つかりませんでした。Google マップで地点を地図上から選び直したリンクを試してください。`);
+  return { lat: +j[0].lat, lon: +j[0].lon };
+}
+async function routeBRouter(wps){
+  const q = wps.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join("|");
+  const r = await fetch(`https://brouter.de/brouter?lonlats=${q}&profile=hiking-mountain&alternativeidx=0&format=geojson`);
+  if (!r.ok) throw new Error(`BRouter: ${r.status} ${(await r.text()).slice(0, 120)}`);
+  const j = await r.json();
+  const c = j.features[0].geometry.coordinates;
+  return c.map(([lon, lat, ele]) => ({ lat, lon, ele: isFinite(ele) ? ele : null }));
+}
+async function routeOSRM(wps){
+  const q = wps.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
+  let lastErr = "";
+  for (const prof of ["foot", "driving"]){   // FOSSGIS の徒歩サーバー。プロファイル名の書き方が2通りあり得るので両方試す
+    try{
+      const r = await fetch(`https://routing.openstreetmap.de/routed-foot/route/v1/${prof}/${q}?overview=full&geometries=geojson&continue_straight=false`);
+      if (!r.ok){ lastErr = `${r.status}`; continue; }
+      const j = await r.json();
+      if (j.code !== "Ok"){ lastErr = j.code; continue; }
+      return j.routes[0].geometry.coordinates.map(([lon, lat]) => ({ lat, lon, ele: null }));
+    }catch(e){ lastErr = e.message; }
+  }
+  throw new Error(`OSRM: ${lastErr}`);
+}
+async function routeFromLink(link, engine){
+  const { wps, name } = await waypointsFromGmapsLink(link);
+  const order = engine === "osrm" ? [routeOSRM, routeBRouter] : [routeBRouter, routeOSRM];
+  const errs = [];
+  for (const fn of order){
+    try{ const pts = normalize(await fn(wps)); if (pts.length >= 2) return { pts, name, wps }; }
+    catch(e){ errs.push(e.message); }
+  }
+  throw new Error("経路を作れませんでした。" + errs.join(" / "));
+}
+
+/* ---------- GPX export ---------- */
+function exportGPX(){
+  if (!state.raw.length) return;
+  const esc = t => String(t).replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+  const pts = state.raw.map(p => `<trkpt lat="${p.lat.toFixed(7)}" lon="${p.lon.toFixed(7)}">${p.ele != null ? `<ele>${p.ele.toFixed(1)}</ele>` : ""}</trkpt>`).join("\n");
+  const src = state.fromLink ? '\n  <metadata><copyright author="OpenStreetMap contributors"><license>https://opendatacommons.org/licenses/odbl/</license></copyright></metadata>' : "";
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="ルート下見ウォーカー" xmlns="http://www.topografix.com/GPX/1/1">${src}\n  <trk><name>${esc(state.name)}</name><trkseg>\n${pts}\n  </trkseg></trk>\n</gpx>\n`;
+  const blob = new Blob([gpx], { type: "application/gpx+xml" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (state.name || "route").replace(/[\\/:*?"<>|]/g, "_").slice(0, 60) + ".gpx";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+/* ---------- route geometry ---------- */
+function cumulative(raw){
   const cum = [0];
   for (let k = 1; k < raw.length; k++) cum.push(cum[k-1] + hav(raw[k-1], raw[k]));
+  return cum;
+}
+function resample(raw, cum, step){
   const total = cum[cum.length - 1];
   const out = [];
   let j = 0;
@@ -273,64 +480,70 @@ function resample(raw, step){
   out.push({ lat: L.lat, lon: L.lon, ele: L.ele, d: total });
   return out;
 }
-
-/* 標高：欠損を補間 → 移動平均で平滑化 → 累積昇降 */
-function buildElevation(){
-  const p = state.pts;
-  const raw = p.map(x => x.ele);
-  const known = raw.filter(v => v != null).length;
-  state.hasEle = known >= 2;
-  if (!state.hasEle){ state.ele = raw.map(() => null); state.up = state.down = 0; return; }
-  // fill gaps linearly
-  const filled = raw.slice();
-  let lastIdx = -1;
-  for (let k = 0; k < filled.length; k++){
-    if (filled[k] == null) continue;
-    if (lastIdx === -1){ for (let m = 0; m < k; m++) filled[m] = filled[k]; }
-    else if (k - lastIdx > 1){
-      for (let m = lastIdx + 1; m < k; m++) filled[m] = filled[lastIdx] + (filled[k] - filled[lastIdx]) * (m - lastIdx) / (k - lastIdx);
-    }
-    lastIdx = k;
-  }
-  for (let m = lastIdx + 1; m < filled.length; m++) filled[m] = filled[lastIdx];
-  const w = Math.max(1, Math.round(CFG.smoothM / CFG.stepM / 2));
-  const sm = filled.map((_, k) => {
-    let s = 0, c = 0;
-    for (let m = Math.max(0, k - w); m <= Math.min(filled.length - 1, k + w); m++){ s += filled[m]; c++; }
-    return s / c;
-  });
-  state.ele = sm;
-  let up = 0, down = 0;
-  for (let k = 1; k < sm.length; k++){ const d = sm[k] - sm[k-1]; if (d > 0) up += d; else down -= d; }
-  state.up = up; state.down = down;
+/* 元の線上で距離dの位置（歩幅を大きくしても進行方向は元の線から正確に取る） */
+function pointAt(d){
+  const cum = state.rawCum, raw = state.raw;
+  const total = cum[cum.length - 1];
+  d = Math.max(0, Math.min(total, d));
+  let lo = 0, hi = cum.length - 1;
+  while (hi - lo > 1){ const m = (lo + hi) >> 1; if (cum[m] <= d) lo = m; else hi = m; }
+  const seg = cum[hi] - cum[lo];
+  const t = seg > 0 ? (d - cum[lo]) / seg : 0;
+  return { lat: raw[lo].lat + (raw[hi].lat - raw[lo].lat) * t, lon: raw[lo].lon + (raw[hi].lon - raw[lo].lon) * t };
+}
+function headingFor(i){
+  const d = state.pts[i].d;
+  const a = pointAt(d - CFG.headBackM), b = pointAt(d + CFG.headAheadM);
+  if (hav(a, b) < 1){ const n = state.pts.length; return bearing(state.pts[Math.max(0, n-2)], state.pts[n-1]); }
+  return bearing(a, b);
 }
 
+/* 標高：欠損を補間 → 移動平均 → 累積昇降 */
+function buildElevation(){
+  const raw = state.pts.map(x => x.ele);
+  state.hasEle = raw.filter(v => v != null).length >= 2;
+  if (!state.hasEle){ state.ele = raw.map(() => null); state.up = state.down = 0; return; }
+  const f = raw.slice();
+  let last = -1;
+  for (let k = 0; k < f.length; k++){
+    if (f[k] == null) continue;
+    if (last === -1){ for (let m = 0; m < k; m++) f[m] = f[k]; }
+    else if (k - last > 1){ for (let m = last + 1; m < k; m++) f[m] = f[last] + (f[k] - f[last]) * (m - last) / (k - last); }
+    last = k;
+  }
+  for (let m = last + 1; m < f.length; m++) f[m] = f[last];
+  const w = Math.max(1, Math.round(CFG.smoothM / CFG.stepM / 2));
+  state.ele = f.map((_, k) => { let s = 0, c = 0; for (let m = Math.max(0, k - w); m <= Math.min(f.length - 1, k + w); m++){ s += f[m]; c++; } return s / c; });
+  let up = 0, down = 0;
+  for (let k = 1; k < state.ele.length; k++){ const dd = state.ele[k] - state.ele[k-1]; if (dd > 0) up += dd; else down -= dd; }
+  state.up = up; state.down = down;
+}
 function gradeAt(i){
   if (!state.hasEle) return null;
   const w = Math.max(1, Math.round(CFG.gradeWindowM / CFG.stepM));
   const a = Math.max(0, i - w), b = Math.min(state.pts.length - 1, i + w);
   const dd = state.pts[b].d - state.pts[a].d;
-  if (dd <= 0) return null;
-  return (state.ele[b] - state.ele[a]) / dd * 100;
+  return dd > 0 ? (state.ele[b] - state.ele[a]) / dd * 100 : null;
 }
 
-/* ---------- Map (Leaflet + OSM) ---------- */
+/* ---------- Map ---------- */
 const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const map = L.map("map", { zoomControl: true }).setView([35.5, 139.6], 10);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 }).addTo(map);
 let routeLine = null, doneLine = null;
-const noSvLayer = L.layerGroup().addTo(map);
+const flagLayer = L.layerGroup().addTo(map);
+const wpLayer = L.layerGroup().addTo(map);
+const wpIcon = L.divIcon({ className: "", html: '<div class="wp"></div>', iconSize: [10,10], iconAnchor: [5,5] });
 const meIcon = L.divIcon({ className: "", html: '<div class="me"><i></i></div>', iconSize: [26,26], iconAnchor: [13,13] });
 const meMarker = L.marker([0,0], { icon: meIcon, interactive: false, keyboard: false });
 
 function drawRoute(){
   if (routeLine) routeLine.remove();
   if (doneLine) doneLine.remove();
-  noSvLayer.clearLayers();
-  const ll = state.pts.map(p => [p.lat, p.lon]);
-  routeLine = L.polyline(ll, { color: cssVar("--route"), weight: 5, opacity: .75 }).addTo(map);
+  flagLayer.clearLayers(); state.flagged.clear();
+  routeLine = L.polyline(state.raw.map(p => [p.lat, p.lon]), { color: cssVar("--route"), weight: 5, opacity: .75 }).addTo(map);
   doneLine = L.polyline([], { color: cssVar("--done"), weight: 6, opacity: .95 }).addTo(map);
   meMarker.addTo(map);
   map.fitBounds(routeLine.getBounds(), { padding: [24,24] });
@@ -343,23 +556,26 @@ function updateMap(){
   doneLine.setLatLngs(state.pts.slice(0, state.i + 1).map(q => [q.lat, q.lon]));
   if (state.follow && !map.getBounds().pad(-0.25).contains([p.lat, p.lon])) map.panTo([p.lat, p.lon]);
 }
-function markNoSv(i){
-  const p = state.pts[i];
-  L.circleMarker([p.lat, p.lon], { radius: 3, color: cssVar("--nosv"), weight: 1, fillOpacity: .9, interactive: false }).addTo(noSvLayer);
+function markPoint(i, kind){
+  const key = kind + i;
+  if (state.flagged.has(key)) return;
+  state.flagged.add(key);
+  const p = state.pts[i], col = cssVar(kind === "warn" ? "--warn" : "--nosv");
+  L.circleMarker([p.lat, p.lon], { radius: 3.5, color: col, weight: 1, fillColor: col, fillOpacity: .9, interactive: false }).addTo(flagLayer);
 }
 function nearestIndex(lat, lon){
-  let best = 0, bd = Infinity;
-  const q = { lat, lon };
+  let best = 0, bd = Infinity; const q = { lat, lon };
   for (let k = 0; k < state.pts.length; k++){ const d = hav(q, state.pts[k]); if (d < bd){ bd = d; best = k; } }
   return best;
 }
 map.on("click", e => { if (!state.pts.length) return; pause(); show(nearestIndex(e.latlng.lat, e.latlng.lng)); });
 
-/* ---------- Elevation profile (canvas, also the scrubber) ---------- */
+/* ---------- Elevation profile (scrubber) ---------- */
 const cv = $("#profile");
 function drawProfile(){
   const dpr = window.devicePixelRatio || 1;
   const w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
   if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){ cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr); }
   const ctx = cv.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -367,57 +583,41 @@ function drawProfile(){
   const pts = state.pts;
   if (!pts.length) return;
   const total = pts[pts.length - 1].d || 1;
-  const top = 6, bottom = h - 16;
+  const top = 6, bottom = h - 15;
   const X = d => d / total * w;
-  ctx.font = `12px ${cssVar("--num")}`;
-  ctx.fillStyle = cssVar("--muted");
-
-  let Y;
+  ctx.font = `11px ${cssVar("--num")}`;
+  let Y = null;
   if (state.hasEle){
     let mn = Infinity, mx = -Infinity;
     for (const v of state.ele){ if (v < mn) mn = v; if (v > mx) mx = v; }
     const span = Math.max(20, mx - mn);
-    mn -= span * .08; mx = mn + span * 1.16;
-    Y = v => bottom - (v - mn) / (mx - mn) * (bottom - top);
+    const lo = mn - span * .08, hi = lo + span * 1.16;
+    Y = v => bottom - (v - lo) / (hi - lo) * (bottom - top);
     const path = () => { ctx.beginPath(); ctx.moveTo(0, bottom); pts.forEach((p,k) => ctx.lineTo(X(p.d), Y(state.ele[k]))); ctx.lineTo(w, bottom); ctx.closePath(); };
     path(); ctx.fillStyle = cssVar("--elev"); ctx.fill();
-    // walked part
     ctx.save(); ctx.beginPath(); ctx.rect(0, 0, X(pts[state.i].d), h); ctx.clip();
     path(); ctx.globalAlpha = .45; ctx.fillStyle = cssVar("--done"); ctx.fill(); ctx.restore();
-    // outline
     ctx.beginPath(); pts.forEach((p,k) => k ? ctx.lineTo(X(p.d), Y(state.ele[k])) : ctx.moveTo(X(p.d), Y(state.ele[k])));
     ctx.strokeStyle = cssVar("--done"); ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = cssVar("--muted");
-    ctx.textAlign = "left";
-    ctx.fillText(`${Math.round(mx - span*.08)} m`, 4, top + 10);
+    ctx.fillStyle = cssVar("--muted"); ctx.textAlign = "left";
+    ctx.fillText(`${Math.round(mx)} m`, 3, top + 9);
   } else {
     ctx.fillStyle = cssVar("--muted"); ctx.textAlign = "center";
-    ctx.fillText("このGPXには標高データがありません（位置の移動には使えます）", w/2, h/2);
+    ctx.fillText("標高データなし（位置の移動には使えます）", w/2, h/2);
   }
-
-  // km ticks
   const km = total / 1000;
-  const steps = [0.1,0.2,0.5,1,2,5,10,20,50];
-  const tick = steps.find(s => km / s <= Math.max(3, Math.floor(w / 70))) || 100;
+  const tick = [0.5,1,2,5,10,20,50].find(s => km / s <= Math.max(2, Math.floor(w / 60))) || 100;
   ctx.fillStyle = cssVar("--muted"); ctx.textAlign = "center";
-  for (let t = tick; t < km; t += tick){
-    const x = X(t*1000);
-    ctx.fillRect(x, bottom, 1, 4);
-    ctx.fillText(`${+t.toFixed(1)}`, x, h - 2);
-  }
-  // playhead
+  for (let t = tick; t < km; t += tick){ const x = X(t*1000); ctx.fillRect(x, bottom, 1, 4); ctx.fillText(`${+t.toFixed(1)}`, x, h - 2); }
   const px = X(pts[state.i].d);
   ctx.fillStyle = cssVar("--route");
   ctx.fillRect(Math.round(px) - 1, 0, 2, bottom);
-  if (Y && state.hasEle){ ctx.beginPath(); ctx.arc(px, Y(state.ele[state.i]), 4, 0, Math.PI*2); ctx.fill(); }
+  if (Y){ ctx.beginPath(); ctx.arc(px, Y(state.ele[state.i]), 4, 0, Math.PI*2); ctx.fill(); }
 }
 function idxFromX(clientX){
   const r = cv.getBoundingClientRect();
   const f = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
-  const total = state.pts[state.pts.length - 1].d;
-  const target = f * total;
-  let k = Math.round(target / CFG.stepM);
-  return Math.min(state.pts.length - 1, Math.max(0, k));
+  return Math.min(state.pts.length - 1, Math.max(0, Math.round(f * state.pts[state.pts.length - 1].d / CFG.stepM)));
 }
 let scrubbing = false;
 cv.addEventListener("pointerdown", e => { if (!state.pts.length) return; pause(); scrubbing = true; cv.setPointerCapture(e.pointerId); preview(idxFromX(e.clientX)); });
@@ -427,8 +627,7 @@ cv.addEventListener("pointercancel", () => { scrubbing = false; });
 
 /* ---------- Readout ---------- */
 function updateReadout(){
-  const p = state.pts[state.i];
-  const total = state.pts[state.pts.length - 1].d;
+  const p = state.pts[state.i], total = state.pts[state.pts.length - 1].d;
   $("#rDist").textContent = (p.d / 1000).toFixed(2);
   $("#rTotal").textContent = (total / 1000).toFixed(2);
   $("#rEle").textContent = state.hasEle ? Math.round(state.ele[state.i]) : "—";
@@ -437,22 +636,28 @@ function updateReadout(){
   $("#rUp").textContent = Math.round(state.up);
   $("#rDown").textContent = Math.round(state.down);
 }
-function updateReq(){
-  $("#rReq").textContent = state.sv ? `ストリートビュー検索 ${state.reqCount} 回（このセッション）` : "";
-}
 
 /* ---------- Street View ---------- */
-function svMsg(text, isErr){
+function svMsg(text, kind){
   const m = $("#svMsg");
+  m.classList.remove("err", "dim");
   if (!text){ m.hidden = true; return; }
-  m.hidden = false; m.textContent = text; m.classList.toggle("err", !!isErr);
+  m.hidden = false; m.textContent = text;
+  if (kind) m.classList.add(kind);
+}
+const DIRS = ["北","北北東","北東","東北東","東","東南東","南東","南南東","南","南南西","南西","西南西","西","西北西","北西","北北西"];
+function hud(walk, diff, bad){
+  const el = $("#hud"); el.hidden = false;
+  let t = `進行方向 ${DIRS[Math.round(walk / 22.5) % 16]} ${Math.round(walk)}°`;
+  if (diff != null) t += `　道の向きとの差 <span class="${bad ? "bad" : ""}">${Math.round(diff)}°</span>`;
+  el.innerHTML = t;
 }
 
 function loadGmaps(key){
   return new Promise((resolve, reject) => {
     if (window.google && google.maps && google.maps.importLibrary) return resolve();
     window.__rpwInit = () => resolve();
-    window.gm_authFailure = () => svMsg("APIキーが認証されませんでした。キーの値、Maps JavaScript API の有効化、請求先アカウント、リファラー制限を確認してください。", true);
+    window.gm_authFailure = () => svMsg("APIキーが認証されませんでした。キーの値、Maps JavaScript API の有効化、請求先アカウント、リファラー制限を確認してください。", "err");
     const s = document.createElement("script");
     s.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(key) + "&v=weekly&loading=async&callback=__rpwInit";
     s.async = true;
@@ -461,42 +666,46 @@ function loadGmaps(key){
   });
 }
 
+/* ビューアを複数作り、先の地点の画像を裏で読み込ませておく。
+   課金はビューア生成ごと（ページを開くたびに buffers 回）で、地点の切替では増えない想定 */
 async function initStreetView(key){
   await loadGmaps(key);
   const lib = await google.maps.importLibrary("streetView");
   state.SV = lib;
   state.sv = new lib.StreetViewService();
-  state.pano = new lib.StreetViewPanorama($("#pano"), {
-    addressControl: false, linksControl: true, panControl: false, zoomControl: false,
-    fullscreenControl: true, motionTracking: false, motionTrackingControl: false,
-    showRoadLabels: false, clickToGo: true, visible: true
-  });
-  state.pano.addListener("pano_changed", () => { state.curPano = state.pano.getPano(); });
-  updateReq();
+  const stack = $("#panoStack");
+  for (let k = 0; k < CFG.buffers; k++){
+    const el = document.createElement("div");
+    el.className = "buf";
+    stack.appendChild(el);
+    const pano = new lib.StreetViewPanorama(el, {
+      addressControl: false, linksControl: false, panControl: false, zoomControl: false,
+      fullscreenControl: true, motionTracking: false, motionTrackingControl: false,
+      showRoadLabels: false, clickToGo: true, visible: true
+    });
+    const b = { el, pano, panoId: null, used: 0 };
+    pano.addListener("pano_changed", () => { b.panoId = pano.getPano(); });
+    state.bufs.push(b);
+  }
   if (state.pts.length) show(state.i);
-  else svMsg("GPXを読み込むと、ここにストリートビューが表示されます");
+  else svMsg("ルートを読み込むと、ここにストリートビューが表示されます");
 }
 
 function lookup(i){
   if (state.cache.has(i)) return state.cache.get(i);
   const p = state.pts[i];
   const pr = (async () => {
-    state.reqCount++; updateReq();
     try{
       const r = await state.sv.getPanorama({
-        location: { lat: p.lat, lng: p.lon },
-        radius: CFG.radiusM,
-        preference: state.SV.StreetViewPreference.NEAREST,
-        source: state.SV.StreetViewSource.OUTDOOR
+        location: { lat: p.lat, lng: p.lon }, radius: CFG.radiusM,
+        preference: state.SV.StreetViewPreference.NEAREST, source: state.SV.StreetViewSource.OUTDOOR
       });
       const loc = r.data.location;
-      return { pano: loc.pano, lat: loc.latLng.lat(), lon: loc.latLng.lng() };
+      const links = (r.data.links || []).map(l => l.heading).filter(h => typeof h === "number");
+      return { pano: loc.pano, links };
     }catch(e){
-      if (e && e.code && e.code !== "ZERO_RESULTS"){
-        state.cache.delete(i);           // 一時的なエラーは再試行できるように
-        return { error: String(e.code) };
-      }
-      markNoSv(i);
+      if (e && e.code && e.code !== "ZERO_RESULTS"){ state.cache.delete(i); return { error: String(e.code) }; }
+      markPoint(i, "nosv");
       return null;
     }
   })();
@@ -504,13 +713,35 @@ function lookup(i){
   return pr;
 }
 
-function headingFor(i, from){
-  const n = state.pts.length;
-  const aheadSteps = Math.max(1, Math.round(CFG.lookAheadM / CFG.stepM));
-  if (i >= n - 1) return bearing(state.pts[Math.max(0, n - 2)], state.pts[n - 1]);
-  const ahead = state.pts[Math.min(n - 1, i + aheadSteps)];
-  const base = (from && hav(from, ahead) > 8) ? from : state.pts[i];
-  return bearing(base, ahead);
+/* 地点の評価：進行方向・道の向きとの差・表示してよいか */
+function evaluate(i, r){
+  const walk = headingFor(i);
+  if (!r || r.error) return { walk, diff: null, bad: false, showable: false };
+  let diff = null;
+  if (r.links && r.links.length){ diff = 180; for (const h of r.links) diff = Math.min(diff, angDiff(h, walk), angDiff(h + 180, walk)); }
+  const bad = diff != null && diff > CFG.alignTolDeg;
+  if (bad) markPoint(i, "warn");
+  return { walk, diff, bad, showable: !(bad && CFG.mismatchMode === "hide") };
+}
+
+/* 指定の画像を持つビューアを返す。なければ前面以外で一番古いものに読み込ませる */
+function acquire(panoId, heading, protect){
+  let b = state.bufs.find(x => x.panoId === panoId);
+  if (!b){
+    const cands = state.bufs.filter(x => x !== state.front && !protect.has(x));
+    if (!cands.length) return null;
+    b = cands.reduce((a, c) => c.used < a.used ? c : a);
+    b.pano.setPano(panoId);
+    b.panoId = panoId;
+  }
+  b.pano.setPov({ heading, pitch: 0 });
+  b.pano.setZoom(1);
+  b.used = ++state.useClock;
+  return b;
+}
+function bringFront(b){
+  for (const x of state.bufs) x.el.classList.toggle("front", x === b);
+  state.front = b;
 }
 
 /* 地図・グラフ・数値だけ更新（ドラッグ中用。APIを呼ばない） */
@@ -522,21 +753,41 @@ function preview(i){
 
 async function show(i){
   preview(i);
-  if (!state.pano) return;
-  const idx = state.i;
-  const tok = ++state.token;
+  if (!state.bufs.length) return;
+  const idx = state.i, tok = ++state.token;
   const r = await lookup(idx);
   if (tok !== state.token) return;
-  if (r && r.error){ svMsg(`ストリートビューの取得でエラーが発生しました（${r.error}）。時間をおいて再試行してください。`, true); return; }
-  if (!r){ svMsg(`この地点の半径${CFG.radiusM}m以内にストリートビューがありません`); }
-  else {
-    svMsg("");
-    if (r.pano !== state.curPano){ state.pano.setPano(r.pano); state.curPano = r.pano; }
-    state.heading = headingFor(idx, { lat: r.lat, lon: r.lon });
-    state.pano.setPov({ heading: state.heading, pitch: 0 });
-    updateMap();
+  if (r && r.error){ svMsg(`ストリートビューの取得でエラーが発生しました（${r.error}）。時間をおいて再試行してください。`, "err"); return; }
+  const ev = evaluate(idx, r);
+  hud(ev.walk, ev.diff, ev.bad);
+  if (!r){
+    svMsg(`この地点の半径${CFG.radiusM}m以内にストリートビューがありません`);
+  } else if (!ev.showable){
+    svMsg(`この地点の画像は進行方向と道の向きが${Math.round(ev.diff)}°ずれているため隠しています（交差する道や並行する道の画像の可能性）`);
+  } else {
+    const b = acquire(r.pano, ev.walk, new Set());
+    if (b) bringFront(b);
+    if (ev.bad && CFG.mismatchMode === "dim") svMsg(`進行方向と道の向きが${Math.round(ev.diff)}°ずれています`, "dim");
+    else svMsg("");
   }
-  for (let k = 1; k <= CFG.prefetch; k++) if (idx + k < state.pts.length) lookup(idx + k);
+  prefetch(idx, tok);
+}
+
+/* 先読み：画像の有無・向きは prefetchMeta 歩先まで、画像そのものは空いているビューアの数だけ */
+async function prefetch(idx, tok){
+  const n = state.pts.length;
+  for (let k = 1; k <= CFG.prefetchMeta && idx + k < n; k++) lookup(idx + k);
+  const protect = new Set(state.front ? [state.front] : []);
+  for (let k = 1; k <= CFG.prefetchMeta && idx + k < n && protect.size < state.bufs.length; k++){
+    const r = await lookup(idx + k);
+    if (tok !== state.token) return;
+    if (!r || r.error) continue;
+    const ev = evaluate(idx + k, r);
+    if (!ev.showable) continue;
+    const b = acquire(r.pano, ev.walk, protect);
+    if (!b) break;
+    protect.add(b);
+  }
 }
 
 /* ---------- Playback ---------- */
@@ -554,36 +805,55 @@ async function tick(){
   if (!state.playing) return;
   state.timer = setTimeout(tick, Math.max(0, CFG.intervalMs - (performance.now() - t0)));
 }
-function pause(){
-  state.playing = false; clearTimeout(state.timer);
-  $("#bPlay").textContent = "再生";
-}
+function pause(){ state.playing = false; clearTimeout(state.timer); $("#bPlay").textContent = "再生"; }
 
 /* ---------- Route setup ---------- */
 function rebuild(keepDistance){
   const d = keepDistance && state.pts.length ? state.pts[state.i].d : 0;
-  state.pts = resample(state.raw, CFG.stepM);
-  state.cache.clear();          // インデックスが変わるのでキャッシュを破棄
+  state.rawCum = cumulative(state.raw);
+  state.pts = resample(state.raw, state.rawCum, CFG.stepM);
+  state.cache.clear();
   buildElevation();
   drawRoute();
   show(Math.min(state.pts.length - 1, Math.round(d / CFG.stepM)));
 }
+function setRoute(pts, name, wps){
+  pause();
+  state.raw = pts; state.name = name;
+  state.fromLink = !!wps;
+  wpLayer.clearLayers();
+  if (wps) wps.forEach(w => L.marker([w.lat, w.lon], { icon: wpIcon, interactive: false, keyboard: false }).addTo(wpLayer));
+  $("#fileName").textContent = state.name;
+  rebuild(false);
+}
+async function loadRouteFile(f){
+  const { pts, name } = await parseRouteFile(f);
+  setRoute(pts, name || f.name, null);
+}
+async function loadRouteLink(link){
+  const { pts, name, wps } = await routeFromLink(link, $("#sEngine").value);
+  setRoute(pts, name, wps);
+}
 
-function readFile(file){
-  return new Promise((res, rej) => {
-    const fr = new FileReader();
-    fr.onload = () => res(fr.result);
-    fr.onerror = () => rej(new Error("ファイルを読み込めませんでした。"));
-    fr.readAsText(file);
+/* ---------- Main view switch ---------- */
+function setMain(which){
+  document.body.dataset.main = which;
+  $("#bSwap").textContent = which === "sv" ? "メインを地図にする" : "メインをストリートビューにする";
+  sSet(CFG.mainStorage, which);
+  requestAnimationFrame(() => {
+    map.invalidateSize();
+    if (window.google && google.maps && google.maps.event) for (const b of state.bufs) google.maps.event.trigger(b.pano, "resize");
+    drawProfile();
   });
 }
+$("#bExport").onclick = exportGPX;
+$("#bSwap").onclick = () => setMain(document.body.dataset.main === "sv" ? "map" : "sv");
 
 /* ---------- UI wiring ---------- */
 const dlg = $("#setup");
-function openSetup(){ $("#setupErr").textContent = ""; $("#keyIn").value = loadKey(); $("#keySave").checked = !!loadKey(); dlg.showModal(); }
+function openSetup(){ $("#setupErr").textContent = ""; $("#keyIn").value = sGet(CFG.keyStorage); $("#keySave").checked = !!sGet(CFG.keyStorage); dlg.showModal(); }
 $("#btnSetup").onclick = openSetup;
 $("#bCancel").onclick = () => dlg.close();
-
 const drop = $("#drop");
 drop.onclick = () => $("#fileIn").click();
 drop.onkeydown = e => { if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#fileIn").click(); } };
@@ -592,8 +862,6 @@ function setPending(f){ if (!f) return; state.pendingFile = f; $("#dropName").te
 ["dragenter","dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
 ["dragleave","drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
 drop.addEventListener("drop", e => setPending(e.dataTransfer.files[0]));
-
-// ダイアログ外でもGPXをドロップできる
 window.addEventListener("dragover", e => e.preventDefault());
 window.addEventListener("drop", async e => {
   e.preventDefault();
@@ -602,28 +870,21 @@ window.addEventListener("drop", async e => {
   if (f) try{ await loadRouteFile(f); }catch(err){ openSetup(); $("#setupErr").textContent = err.message; }
 });
 
-async function loadRouteFile(f){
-  const { pts, name } = parseGPX(await readFile(f));
-  pause();
-  state.raw = pts; state.name = name || f.name;
-  $("#fileName").textContent = state.name;
-  rebuild(false);
-}
-
 $("#bStart").onclick = async () => {
   const err = $("#setupErr"); err.textContent = "";
   const key = $("#keyIn").value.trim();
   try{
-    if (state.pendingFile){ await loadRouteFile(state.pendingFile); state.pendingFile = null; $("#dropName").textContent = ""; }
-    else if (!state.raw.length){ err.textContent = "GPXファイルを選んでください。"; return; }
-    saveKey($("#keySave").checked ? key : "");
+    const link = $("#linkIn").value.trim();
+    if (link){
+      $("#bStart").disabled = true; err.textContent = "経路を作成しています…";
+      try{ await loadRouteLink(link); } finally { $("#bStart").disabled = false; }
+      err.textContent = ""; $("#linkIn").value = "";
+    } else if (state.pendingFile){ await loadRouteFile(state.pendingFile); state.pendingFile = null; $("#dropName").textContent = ""; }
+    else if (!state.raw.length){ err.textContent = "ルートファイルを選ぶか、経路リンクを貼ってください。"; return; }
+    sSet(CFG.keyStorage, $("#keySave").checked ? key : "");
     dlg.close();
-    if (key && !state.sv){
-      svMsg("ストリートビューを準備しています…");
-      await initStreetView(key);
-    } else if (!key && !state.sv){
-      svMsg("APIキーを設定すると、ここにストリートビューが表示されます");
-    }
+    if (key && !state.sv){ svMsg("ストリートビューを準備しています…"); await initStreetView(key); }
+    else if (!key && !state.sv) svMsg("APIキーを設定すると、ここにストリートビューが表示されます");
   }catch(e2){
     if (!dlg.open) dlg.showModal();
     err.textContent = e2.message;
@@ -635,6 +896,7 @@ $("#bPrev").onclick = () => { if (!state.pts.length) return; pause(); show(state
 $("#bNext").onclick = () => { if (!state.pts.length) return; pause(); show(state.i + 1); };
 $("#sSpeed").onchange = e => { CFG.intervalMs = +e.target.value; };
 $("#sStep").onchange = e => { CFG.stepM = +e.target.value; if (state.raw.length){ pause(); rebuild(true); } };
+$("#sMismatch").onchange = e => { CFG.mismatchMode = e.target.value; if (state.pts.length && state.bufs.length) show(state.i); };
 $("#cFollow").onchange = e => { state.follow = e.target.checked; };
 
 document.addEventListener("keydown", e => {
@@ -645,7 +907,7 @@ document.addEventListener("keydown", e => {
   else if (e.key === "ArrowLeft"){ pause(); show(state.i - 1); }
 });
 
-new ResizeObserver(() => { drawProfile(); map.invalidateSize(); }).observe(document.body);
+new ResizeObserver(() => { drawProfile(); map.invalidateSize(); }).observe(document.querySelector(".app"));
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   if (!state.pts.length) return;
   routeLine.setStyle({ color: cssVar("--route") });
@@ -655,9 +917,10 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
 
 /* ---------- boot ---------- */
 (async () => {
-  const k = loadKey();
+  setMain(sGet(CFG.mainStorage) === "map" ? "map" : "sv");
+  const k = sGet(CFG.keyStorage);
   openSetup();
-  if (k){ try{ await initStreetView(k); }catch(e){ svMsg(e.message, true); } }
+  if (k){ try{ await initStreetView(k); }catch(e){ svMsg(e.message, "err"); } }
 })();
 </script>
 </body>
