@@ -205,14 +205,19 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
   <div class="or">または</div>
   <div class="field">
     <span>Google マップの経路リンク</span>
-    <input id="linkIn" type="url" inputmode="url" autocomplete="off" placeholder="https://www.google.com/maps/dir/...">
-    <small>出発地・経由地・目的地と、ドラッグで追加した経由点を読み取り、OpenStreetMapの徒歩ルートで引き直します。短縮リンク（maps.app.goo.gl）は、一度ブラウザで開いてアドレス欄の長いURLを貼ってください。</small>
+    <input id="linkIn" type="text" inputmode="url" autocomplete="off" placeholder="共有したリンクや文章をそのまま貼り付け">
+    <small>出発地・経由地・目的地（とドラッグで追加した経由点）を読み取り、OpenStreetMapの徒歩ルートで引き直します。短縮リンク（maps.app.goo.gl）は、下の展開用URLを設定すると直接使えます。</small>
     <label class="check">経路エンジン
       <select id="sEngine">
         <option value="brouter" selected>BRouter（標高付き）</option>
         <option value="osrm">OSRM 徒歩（標高なし）</option>
       </select>
     </label>
+  </div>
+  <div class="field">
+    <span>短縮リンクの展開用URL（任意）</span>
+    <input id="expIn" type="text" inputmode="url" autocomplete="off" placeholder="https://xxxx.workers.dev">
+    <small>Cloudflare Workers に置いた展開用プログラムのURL。このブラウザに保存されます。</small>
   </div>
   <div class="field">
     <span>Google Maps APIキー（任意）</span>
@@ -246,6 +251,7 @@ const CFG = {
   alignTolDeg: 35,      // 進行方向と「画像地点の道の向き」の許容差（度）
   mismatchMode: "hide", // 向きが合わない画像: hide / dim / show
   keyStorage: "routePreviewWalker.apiKey",
+  expStorage: "routePreviewWalker.expander",
   mainStorage: "routePreviewWalker.main"
 };
 
@@ -361,33 +367,88 @@ async function parseRouteFile(f){
    Googleの経路データ自体は使わず（利用規約上、Google以外の地図への表示や保存は不可）、
    リンクに含まれる地点の座標だけを取り出してOSMベースの経路エンジンに渡す。
    URLの内部形式は非公開仕様のため、Google側の変更で読めなくなる可能性がある。 */
-const NUM = "(-?\\d+(?:\\.\\d+)?)";
+/* 貼り付けた文章からURLを取り出し、短縮リンクなら展開する */
+async function resolveLink(input){
+  const m = input.match(/https?:\/\/[^\s"'<>]+/);
+  if (!m) throw new Error("リンクが見つかりません。https:// から始まるURLを貼ってください。");
+  let url = new URL(m[0]);
+  if (/(^|\.)goo\.gl$/.test(url.hostname)){
+    const exp = sGet(CFG.expStorage);
+    if (!exp) throw new Error("短縮リンクを使うには「短縮リンクの展開用URL」を設定してください。設定しない場合は、一度ブラウザで開いてアドレス欄の長いURLを貼ってください。");
+    let r;
+    try{ r = await fetch(exp.replace(/\/$/, "") + "/?u=" + encodeURIComponent(url.href)); }
+    catch(e){ throw new Error("展開用URLに接続できませんでした。URLが正しいか確認してください。"); }
+    if (!r.ok) throw new Error(`短縮リンクを展開できませんでした（${r.status}）。`);
+    const j = await r.json();
+    url = new URL(j.url);
+    if (/(^|\.)goo\.gl$/.test(url.hostname)) throw new Error("短縮リンクの展開先が見つかりませんでした。リンクの有効期限が切れていないか確認してください。");
+  }
+  return url;
+}
+
+/* geocode= パラメータ（Base64のprotobuf）から座標を取り出す。field2=緯度, field3=経度（×1e6, fixed32） */
+function decodeGeoToken(tok){
+  if (!tok) return null;
+  try{
+    const bin = Uint8Array.from(atob(tok.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+    const dv = new DataView(bin.buffer);
+    let i = 0, lat = null, lon = null;
+    const varint = () => { let r = 0, sh = 0, b; do { b = bin[i++]; r += (b & 127) * 2 ** sh; sh += 7; } while ((b & 128) && i < bin.length); return r; };
+    while (i < bin.length){
+      const key = varint(), f = Math.floor(key / 8), w = key & 7;
+      if (w === 5){ const v = dv.getInt32(i, true); i += 4; if (f === 2) lat = v / 1e6; if (f === 3) lon = v / 1e6; }
+      else if (w === 1) i += 8;
+      else if (w === 0) varint();
+      else if (w === 2) i += varint();
+      else break;
+    }
+    return (lat != null && lon != null && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) ? { lat, lon } : null;
+  }catch(e){ return null; }
+}
+const COORD_RE = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/;
+async function toStop(label, known){
+  const c = label.match(COORD_RE);
+  if (c) return { lat: +c[1], lon: +c[2], label };
+  if (known) return { ...known, label };
+  return { ...(await geocode(label)), label };
+}
+
+/* 対応形式：
+   A) /maps/dir/地点/地点/.../data=...   （ブラウザ版）
+   B) /maps?saddr=..&daddr=..&geocode=..  （アプリの共有リンクの展開先）
+   C) /maps/dir/?api=1&origin=..&destination=..&waypoints=a|b  */
 async function waypointsFromGmapsLink(input){
-  let url;
-  try{ url = new URL(input.trim()); }catch(e){ throw new Error("リンクの形式が正しくありません。https:// から始まるURLを貼ってください。"); }
-  if (/goo\.gl$|maps\.app\.goo\.gl$/.test(url.hostname)) throw new Error("短縮リンクはこのページから展開できません。一度ブラウザで開き、アドレス欄の長いURL（/maps/dir/ を含むもの）を貼ってください。");
+  const url = await resolveLink(input);
+  const q = url.searchParams;
   const path = decodeURIComponent(url.pathname).replace(/\+/g, " ");
-  const m = path.match(/\/maps\/dir\/(.*)$/);
-  if (!m) throw new Error("経路のリンクではないようです。Google マップで経路を表示した状態のURLを貼ってください。");
-  const parts = m[1].split("/");
-  const dataPart = parts.find(x => x.startsWith("data=")) || "";
-  const names = parts.filter(x => x && !x.startsWith("@") && !x.startsWith("data="));
-  // data内の座標：地点（!2m2!1d経度!2d緯度）とドラッグで追加した経由点（!3m4!1m2!1d経度!2d緯度）
-  const stopRe = new RegExp("!2m2!1d" + NUM + "!2d" + NUM, "g");
-  const viaRe  = new RegExp("!3m4!1m2!1d" + NUM + "!2d" + NUM, "g");
-  const dataStops = [...dataPart.matchAll(stopRe)].map(x => ({ lon: +x[1], lat: +x[2] }));
-  const vias = [...dataPart.matchAll(viaRe)].map(x => ({ lon: +x[1], lat: +x[2] }));
-  const coordRe = new RegExp("^\\s*" + NUM + "\\s*,\\s*" + NUM + "\\s*$");
-  const stops = [];
-  let di = 0;
-  for (const n of names){
-    const c = n.match(coordRe);
-    if (c){ stops.push({ lat: +c[1], lon: +c[2], label: n }); continue; }
-    if (di < dataStops.length){ stops.push({ ...dataStops[di++], label: n }); continue; }
-    stops.push({ ...(await geocode(n)), label: n });
+  let stops = [], vias = [];
+
+  if (q.get("saddr") || q.get("daddr")){                                   // B
+    const labels = [q.get("saddr") || "", ...(q.get("daddr") || "").split(/\s+to:/)].map(x => x.trim());
+    const geo = (q.get("geocode") || "").split(";").map(decodeGeoToken);
+    for (let k = 0; k < labels.length; k++){
+      if (!labels[k] && !geo[k]) continue;
+      stops.push(await toStop(labels[k] || "地点", geo[k]));
+    }
+  } else if (q.get("api") === "1" && (q.get("origin") || q.get("destination"))){  // C
+    const labels = [q.get("origin"), ...(q.get("waypoints") || "").split("|"), q.get("destination")].filter(Boolean);
+    for (const l of labels) stops.push(await toStop(l.replace(/^via:/, ""), null));
+  } else {                                                                   // A
+    const m = path.match(/\/maps\/dir\/(.*)$/);
+    if (!m) throw new Error("経路のリンクではないようです。Google マップで経路を表示した状態で共有したリンクを貼ってください。");
+    const parts = m[1].split("/");
+    const dataPart = parts.find(x => x.startsWith("data=")) || "";
+    const names = parts.filter(x => x && !x.startsWith("@") && !x.startsWith("data="));
+    const dataStops = [...dataPart.matchAll(/!2m2!1d(-?\d+(?:\.\d+)?)!2d(-?\d+(?:\.\d+)?)/g)].map(x => ({ lon: +x[1], lat: +x[2] }));
+    vias = [...dataPart.matchAll(/!3m4!1m2!1d(-?\d+(?:\.\d+)?)!2d(-?\d+(?:\.\d+)?)/g)].map(x => ({ lon: +x[1], lat: +x[2] }));
+    let di = 0;
+    for (const n of names){
+      if (COORD_RE.test(n)){ stops.push(await toStop(n, null)); continue; }
+      stops.push(await toStop(n, di < dataStops.length ? dataStops[di++] : null));
+    }
   }
   if (stops.length < 2) throw new Error("出発地と目的地を読み取れませんでした。現在地を出発地にしたリンクの場合は、出発地を具体的な場所に変えてください。");
-  // 経由点は、遠回りが最小になる区間に、区間内の進み具合の順で挿入する
+
   const legs = stops.slice(0, -1).map(() => []);
   for (const v of vias){
     let best = 0, bc = Infinity;
@@ -399,7 +460,8 @@ async function waypointsFromGmapsLink(input){
     out.push({ lat: st.lat, lon: st.lon, stop: true });
     if (k < legs.length) legs[k].sort((a, b) => hav(st, a) - hav(st, b)).forEach(v => out.push({ lat: v.lat, lon: v.lon, stop: false }));
   });
-  return { wps: out, name: stops.map(x => x.label).join(" → ") };
+  const short = t => COORD_RE.test(t) ? "指定地点" : t.replace(/^日本、?/, "").slice(0, 24);
+  return { wps: out, name: stops.map(x => short(x.label)).join(" → ") };
 }
 async function geocode(q){
   const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=ja&q=" + encodeURIComponent(q));
@@ -851,7 +913,7 @@ $("#bSwap").onclick = () => setMain(document.body.dataset.main === "sv" ? "map" 
 
 /* ---------- UI wiring ---------- */
 const dlg = $("#setup");
-function openSetup(){ $("#setupErr").textContent = ""; $("#keyIn").value = sGet(CFG.keyStorage); $("#keySave").checked = !!sGet(CFG.keyStorage); dlg.showModal(); }
+function openSetup(){ $("#setupErr").textContent = ""; $("#expIn").value = sGet(CFG.expStorage); $("#keyIn").value = sGet(CFG.keyStorage); $("#keySave").checked = !!sGet(CFG.keyStorage); dlg.showModal(); }
 $("#btnSetup").onclick = openSetup;
 $("#bCancel").onclick = () => dlg.close();
 const drop = $("#drop");
@@ -874,6 +936,7 @@ $("#bStart").onclick = async () => {
   const err = $("#setupErr"); err.textContent = "";
   const key = $("#keyIn").value.trim();
   try{
+    sSet(CFG.expStorage, $("#expIn").value.trim());
     const link = $("#linkIn").value.trim();
     if (link){
       $("#bStart").disabled = true; err.textContent = "経路を作成しています…";
