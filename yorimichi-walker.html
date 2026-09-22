@@ -172,7 +172,7 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
   <section class="panel" aria-label="操作パネル">
     <div class="phead">
       <span id="fileName">寄り道ウォーカー</span>
-      <small id="ver" style="color:var(--muted);font-size:11px">v2026-09-22h</small>
+      <small id="ver" style="color:var(--muted);font-size:11px">v2026-09-23b</small>
       <button id="btnSetup" type="button">ルート・キー</button>
     </div>
     <div class="readout" aria-live="polite">
@@ -1184,7 +1184,15 @@ const OVERPASS_SERVERS = [
 ];
 /* サーバーごとに「休ませる時間」を持ち、429（混雑・回数制限）や504（タイムアウト）が返ったら
    そのサーバーをしばらく使わず、別のサーバーに回す。同時に投げるのは常に1件だけ。 */
-const opCool = new Map();
+const opCool = new Map();     // サーバー -> いつまで休ませるか
+const opFail = new Map();     // サーバー -> 連続失敗回数（失敗が続くほど長く休ませる）
+function coolDown(u, seconds){
+  const n = (opFail.get(u) || 0) + 1;
+  opFail.set(u, n);
+  const wait = seconds != null ? seconds * 1000 : Math.min(300000, 30000 * 2 ** (n - 1));   // 30秒→1分→2分→…最大5分
+  opCool.set(u, Date.now() + wait);
+  return wait;
+}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function overpassFetch(q){
   const opts = { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "data=" + encodeURIComponent(q) };
@@ -1200,14 +1208,14 @@ async function overpassFetch(q){
     }
     const u = avail[0], host = new URL(u).hostname;
     try{
-      const r = await fetchT(u, opts, 40000);
-      if (r.ok) return await r.json();
-      const cool = r.status === 429 ? 20000 * (attempt + 1) : r.status >= 500 ? 30000 : 10000;
-      opCool.set(u, Date.now() + cool);
-      errs.push(`${host} ${r.status}`);
+      const r = await fetchT(u, opts, 60000);
+      if (r.ok){ opFail.set(u, 0); return await r.json(); }
+      const ra = parseInt(r.headers.get("Retry-After") || "", 10);   // 返ってくれば優先（CORSで読めないこともある）
+      const wait = coolDown(u, isFinite(ra) ? ra : null);
+      errs.push(`${host} ${r.status}（${Math.round(wait/1000)}秒休止）`);
     }catch(e){
-      opCool.set(u, Date.now() + 20000);
-      errs.push(`${host} ${e.message}`);
+      const wait = coolDown(u);
+      errs.push(`${host} ${e.message}（${Math.round(wait/1000)}秒休止）`);
     }
   }
   throw new Error(errs.slice(-2).join(" / "));
@@ -1266,6 +1274,7 @@ const TILE_TTL_MS = 30 * 24 * 3600 * 1000;   // スポットは30日で取り直
 state.cacheReady = (async () => {
   let n = 0;
   for (const [k, v] of await idb.entries("tiles")){
+    if (!String(k).startsWith(TILE_VER + ":")) continue;   // 区画の切り方が変わった古い保存は使わない
     if (v && Date.now() - v.t < TILE_TTL_MS){ state.tiles.set(k, { st: "ok", els: v.els }); n++; }
   }
   state.cachedTiles = n;
@@ -1273,9 +1282,10 @@ state.cacheReady = (async () => {
 
 /* スポットは約2km四方のタイル単位で取得してキャッシュする。
    ルート候補どうしで重なるタイルは1回しか取らないので、候補を比べても負荷が増えにくい。 */
-const TILE_LAT = 0.02, TILE_LON = 0.025;
+const TILE_LAT = 0.045, TILE_LON = 0.05;   // 約5km四方。1リクエストで取る範囲を広げ、100kmでも20回程度に収める
+const TILE_VER = "v2";
 state.tiles = state.tiles || new Map();   // key -> { st: "ok" | "err", els: [] }
-const tileKey = (lat, lon) => `${Math.floor(lat / TILE_LAT)}_${Math.floor(lon / TILE_LON)}`;
+const tileKey = (lat, lon) => `${TILE_VER}:${Math.floor(lat / TILE_LAT)}_${Math.floor(lon / TILE_LON)}`;
 function tilesFor(grid, R){
   const keys = [], seen = new Set();
   const dLat = R / 111000;
@@ -1287,10 +1297,26 @@ function tilesFor(grid, R){
   }
   return keys;
 }
-function tileQuery(key){
-  const [a, b] = key.split("_").map(Number);
-  const bb = `(${(a*TILE_LAT).toFixed(5)},${(b*TILE_LON).toFixed(5)},${((a+1)*TILE_LAT).toFixed(5)},${((b+1)*TILE_LON).toFixed(5)})`;
-  return `[out:json][timeout:25];(` +
+const keyParts = k => k.replace(TILE_VER + ":", "").split("_").map(Number);
+const makeKey = (a, b) => `${TILE_VER}:${a}_${b}`;
+/* 必要な区画がつながっていれば、最大3×3（約15km四方）をまとめて1回で取る */
+function blockFor(startKey, needed){
+  const [a0, b0] = keyParts(startKey);
+  if (state.forceSingle.has(startKey)) return { a0, b0, w: 1, h: 1, keys: [startKey] };
+  let w = 1, h = 1;
+  while (w < 3 && needed.has(makeKey(a0, b0 + w)) && !state.forceSingle.has(makeKey(a0, b0 + w))) w++;
+  outer: while (h < 3){
+    for (let i = 0; i < w; i++){ const k = makeKey(a0 + h, b0 + i); if (!needed.has(k) || state.forceSingle.has(k)) break outer; }
+    h++;
+  }
+  const keys = [];
+  for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) keys.push(makeKey(a0 + r, b0 + c));
+  return { a0, b0, w, h, keys };
+}
+function tileQuery(blk){
+  const { a0, b0, w, h } = blk;
+  const bb = `(${(a0*TILE_LAT).toFixed(5)},${(b0*TILE_LON).toFixed(5)},${((a0+h)*TILE_LAT).toFixed(5)},${((b0+w)*TILE_LON).toFixed(5)})`;
+  return `[out:json][timeout:60];/*yorimichi-walker (personal use)*/(` +
     `nwr[amenity~"^(toilets|drinking_water|cafe|place_of_worship)$"]${bb};` +
     `nwr[shop=convenience]${bb};` +
     `nwr[tourism~"^(viewpoint|attraction|museum)$"]${bb};` +
@@ -1360,7 +1386,7 @@ function candStats(c){
 
 /* タイル取得は1本の待ち行列で順番に処理する。候補を切り替えても並行して走らず、
    優先順位（今のルート・今いる地点の近く）が入れ替わるだけ。 */
-state.tileQueue = []; let tileRunner = null;
+state.tileQueue = []; state.forceSingle = new Set(); let tileRunner = null;
 const tileOk = k => (state.tiles.get(k) || {}).st === "ok";
 function spotStatus(msg){
   const st = $("#poiStatus"); if (!st) return;
@@ -1385,12 +1411,34 @@ async function runTileQueue(){
   while (state.tileQueue.length){
     const k = state.tileQueue.shift();
     if (tileOk(k)) continue;
+    const needed = new Set([k, ...state.tileQueue].filter(x => !tileOk(x)));
+    const blk = blockFor(k, needed);
+    state.tileQueue = state.tileQueue.filter(x => !blk.keys.includes(x));
     spotStatus();
     try{
-      const j = await overpassFetch(tileQuery(k));
-      state.tiles.set(k, { st: "ok", els: j.elements || [] });
-      idb.put("tiles", k, { t: Date.now(), els: j.elements || [] });
-    }catch(e){ state.tiles.set(k, { st: "err", els: [], err: e.message }); }
+      const j = await overpassFetch(tileQuery(blk));
+      // まとめて取った結果を、区画ごとに振り分けて保存する（次回は区画単位で使い回せる）
+      const byTile = new Map(blk.keys.map(x => [x, []]));
+      for (const el of j.elements || []){
+        const lat = el.lat != null ? el.lat : el.center && el.center.lat;
+        const lon = el.lon != null ? el.lon : el.center && el.center.lon;
+        if (lat == null) continue;
+        const kk = tileKey(lat, lon);
+        if (byTile.has(kk)) byTile.get(kk).push(el);
+      }
+      for (const [kk, els] of byTile){
+        state.tiles.set(kk, { st: "ok", els });
+        idb.put("tiles", kk, { t: Date.now(), els });
+      }
+    }catch(e){
+      if (blk.keys.length > 1){
+        // まとめ取りが失敗したら、その区画は1つずつ取り直す
+        blk.keys.forEach(x => state.forceSingle.add(x));
+        state.tileQueue = [...blk.keys, ...state.tileQueue];
+      } else {
+        state.tiles.set(k, { st: "err", els: [], err: e.message });
+      }
+    }
     refreshSpots();
     (state.cands || []).forEach(candStats); renderCands();
     spotStatus();
