@@ -72,6 +72,13 @@ input[type=text],input[type=password],input[type=number],input[type=url]{font-si
 .sub span{margin-right:10px;white-space:nowrap}
 .sights{margin:4px 0 0;font-size:13px;overflow-wrap:anywhere}
 .cand footer{display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px}
+.btns{display:flex;gap:6px}
+.sub-btn{padding:7px 10px;font-size:14px}
+.links{display:flex;flex-wrap:wrap;gap:6px 14px;margin:8px 0 0;font-size:13px}
+.links a,.linkbtn,#gmLinks a{color:var(--go);font-weight:700}
+.linkbtn{border:0;background:none;padding:0;font-size:13px;text-decoration:underline}
+#gmLinks{display:grid;gap:4px;margin-top:8px;font-size:14px}
+.rough{margin-left:6px;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px}
 .basis{font-size:12px;color:var(--muted)}
 .adopt{background:var(--go);border-color:var(--go);color:#fff;font-weight:700;padding:7px 14px}
 
@@ -172,6 +179,7 @@ label.inline{display:flex;gap:6px;align-items:center;font-size:14px}
       <button id="btnGpx">GPXを保存</button>
       <button id="btnReset">最初から</button>
     </div>
+    <div id="gmLinks"></div>
   </section>
 
   <details id="settings">
@@ -198,7 +206,7 @@ label.inline{display:flex;gap:6px;align-items:center;font-size:14px}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 "use strict";
-const APP_VERSION = "0.3.0";
+const APP_VERSION = "0.4.1";
 
 /* ===== 設定 ===== */
 const CFG = {
@@ -864,7 +872,15 @@ async function rerankRoutes(){
 
 /* ===== 地図 ===== */
 const map = L.map("map", { zoomControl: true, attributionControl: true }).setView([35.5076, 139.6176], 14);
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors" }).addTo(map);
+const baseMap = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors" }).addTo(map);
+const basePhoto = L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg",
+  { maxZoom: 19, maxNativeZoom: 18, attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>' });
+L.control.layers({ "地図": baseMap, "航空写真（地理院）": basePhoto }, null, { position: "topright" }).addTo(map);
+function showPhoto(p){
+  if (map.hasLayer(baseMap)) map.removeLayer(baseMap);
+  if (!map.hasLayer(basePhoto)) basePhoto.addTo(map);
+  map.setView([p.lat, p.lon], 17);
+}
 const layLegs = L.layerGroup().addTo(map), layCands = L.layerGroup().addTo(map), layPoi = L.layerGroup().addTo(map), layMark = L.layerGroup().addTo(map);
 
 function drawPlan(){
@@ -930,11 +946,11 @@ function goTo(p, name){
 function clearCands(){ state.cands = []; state.sel = -1; state.mode = ""; $("#cands").innerHTML = ""; $("#routeBox").hidden = true; drawCands(); }
 function showCands(cands, mode, notes, basis, head){
   cands.forEach((c, i) => { c.color = COLORS[i % COLORS.length]; });
-  state.cands = cands; state.mode = mode; state.sel = 0; state.basis = basis;
+  state.cands = cands; state.mode = mode; state.sel = -1; state.basis = basis;
   const order = basis === "jev" ? "Jevの推奨度順" : basis === "code" ? "アプリ内の採点順" : "";
   const h = head || (
-    mode === "dest"   ? `行き先の候補（${order}）。点線はOSRMの仮の道で、決めたあとに道順を選びます` :
-    mode === "finish" ? "駅・自宅の候補（近い順）。決めたあとに道順を選びます" :
+    mode === "dest"   ? `行き先の候補（${order}）。点線はOSRMの仮の道です。カードをタップすると拡大、もう一度タップで全体に戻ります` :
+    mode === "finish" ? "駅・自宅の候補（近い順）。点線はOSRMの仮の道です" :
     mode === "route"  ? (cands.length > 1 ? `道順の候補（${order}）` : "道順（ほかの案は同じ道になったためまとめました）") : "");
   status([h, ...notes].join("。"));
   $("#routeBox").hidden = mode !== "route";
@@ -956,6 +972,25 @@ function basisText(c){
   if (state.basis === "code") return `採点 ${c.score}`;
   return "";
 }
+/* 外部で場所を確かめるリンク（Googleマップ URLs はAPIキー不要） */
+const llq = p => `${p.lat.toFixed(6)}%2C${p.lon.toFixed(6)}`;
+function gmDir(points){
+  const o = points[0], d = points[points.length - 1], w = points.slice(1, -1);
+  return `https://www.google.com/maps/dir/?api=1&origin=${llq(o)}&destination=${llq(d)}` +
+    (w.length ? `&waypoints=${w.map(llq).join("%7C")}` : "") + "&travelmode=walking";
+}
+const gmPano = p => `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${llq(p)}`;
+// Google Earthの「@緯度,経度,…」形式は公式に文書化されていないため、開けなくなる可能性がある
+const gEarth = p => `https://earth.google.com/web/@${p.lat.toFixed(6)},${p.lon.toFixed(6)},0a,700d,35y,0h,45t,0r`;
+function linksRow(c, i){
+  const from = cur(), to = c.target || c.to;
+  return `<p class="links">
+    <a href="${gmDir([from, to])}" target="_blank" rel="noopener">Googleマップで道順</a>
+    <a href="${gmPano(to)}" target="_blank" rel="noopener">ストリートビュー</a>
+    <a href="${gEarth(to)}" target="_blank" rel="noopener">Google Earth</a>
+    <button class="linkbtn" data-photo="${i}">航空写真で見る</button>
+  </p>`;
+}
 function destCard(c, i){
   const near = c.nearby.slice(0, 4).map(n => `${esc(n.name)}（${esc(n.label)}）`).join("、");
   return `<article class="cand${i === state.sel ? " sel" : ""}" style="--c:${c.color}" data-i="${i}">
@@ -966,7 +1001,8 @@ function destCard(c, i){
     </header>
     ${near ? `<p class="sights">近く：${near}</p>` : ""}
     ${c.overlap > 0.05 ? `<p class="sub"><span>歩いた道と重なる ${pct(c.overlap)}</span></p>` : ""}
-    <footer><span class="basis">${basisText(c)}</span><button class="adopt" data-adopt="${i}">ここに決める</button></footer>
+    ${i === state.sel ? linksRow(c, i) : ""}
+    <footer><span class="basis">${basisText(c)}</span><span class="btns"><button class="sub-btn" data-route="${i}">道順を比べる</button><button class="adopt" data-adopt="${i}">ここに決める</button></span></footer>
   </article>`;
 }
 function routeCard(c, i){
@@ -991,6 +1027,7 @@ function routeCard(c, i){
     ${facts ? `<p class="facts">${facts}</p>` : ""}
     ${sub ? `<p class="sub">${sub}</p>` : ""}
     ${sights ? `<p class="sights">${sights}</p>` : ""}
+    ${i === state.sel ? linksRow(c, i) : ""}
     <footer><span class="basis">${basisText(c)}</span><button class="adopt" data-adopt="${i}">この道にする</button></footer>
   </article>`;
 }
@@ -999,21 +1036,25 @@ function renderCards(){
 }
 function selectCand(i, scroll){
   state.sel = i;
-  document.querySelectorAll(".cand").forEach(el => el.classList.toggle("sel", Number(el.dataset.i) === i));
-  drawCands();
+  renderCards(); drawCands();
   if (scroll){ const el = document.querySelector(`.cand[data-i="${i}"]`); if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
 }
 $("#cands").addEventListener("click", (e) => {
+  if (e.target.closest("a")) return;            // 外部リンクはそのまま開く
   if (state.busy) return;
+  const ph = e.target.closest("[data-photo]");
+  if (ph){ const c = state.cands[Number(ph.dataset.photo)]; showPhoto(c.target || c.to); return; }
+  const rt = e.target.closest("[data-route]");
+  if (rt){ planRoutes(state.cands[Number(rt.dataset.route)], true); return; }
   const ad = e.target.closest("[data-adopt]");
-  if (ad){
-    const c = state.cands[Number(ad.dataset.adopt)];
-    if (state.mode === "route") adopt(c); else planRoutes(c, true);
-    return;
-  }
+  if (ad){ adopt(state.cands[Number(ad.dataset.adopt)]); return; }
   const card = e.target.closest(".cand");
-  if (card){ selectCand(Number(card.dataset.i), false); const c = state.cands[state.sel];
-    map.fitBounds(L.latLngBounds(c.grid.map(p => [p.lat, p.lon])), { padding: [24, 24] }); }
+  if (!card) return;
+  const i = Number(card.dataset.i);
+  if (i === state.sel){ state.sel = -1; renderCards(); drawCands(); fitCands(); return; }   // もう一度タップで選択を外し、全体表示に戻す
+  selectCand(i, false);
+  const c = state.cands[i];
+  map.fitBounds(L.latLngBounds(c.grid.map(p => [p.lat, p.lon])), { padding: [24, 24] });
 });
 $("#btnBack").onclick = () => {
   const p = state.prevList; if (!p) return;
@@ -1022,7 +1063,7 @@ $("#btnBack").onclick = () => {
 $("#btnRerank").onclick = rerankRoutes;
 function adopt(c){
   if (!c) return;
-  state.legs.push({ to: c.to, name: c.name, type: c.type, km: c.km, ascent: c.ascent,
+  state.legs.push({ to: c.to, name: c.name, type: c.type, km: c.km, ascent: c.ascent, rough: state.mode !== "route",
     coords: c.coords.map(p => [+p.lat.toFixed(6), +p.lon.toFixed(6), p.ele == null ? null : Math.round(p.ele * 10) / 10]) });
   state.prevList = null;
   savePlan(); clearCands(); render();
@@ -1044,12 +1085,28 @@ function render(){
     $("#whereTitle").innerHTML = `${esc(k.name)} から、次はどこへ` +
       (state.legs.length ? `<small>これまで <span class="num">${tot.toFixed(1)}</span> km、${state.legs.length}区間、登り ${Math.round(asc)} m</small>` : `<small>ここが起点です</small>`);
     let prev = state.start.name;
-    $("#legs").innerHTML = state.legs.map(l => { const h = `<li><span>${esc(prev)} から ${esc(l.name)}</span><b>${l.km.toFixed(1)} km</b></li>`; prev = l.name; return h; }).join("")
+    $("#legs").innerHTML = state.legs.map(l => { const h = `<li><span>${esc(prev)} から ${esc(l.name)}${l.rough ? '<small class="rough">仮の道</small>' : ""}</span><b>${l.km.toFixed(1)} km</b></li>`; prev = l.name; return h; }).join("")
       || `<li><span>まだ区間はありません</span></li>`;
   }
+  renderPlanLinks();
   syncChips();
   $("#btnUndo").disabled = state.busy || !state.legs.length;
   drawPlan();
+}
+
+/* 歩く順番をGoogleマップで開く。iPhoneのGoogleマップアプリで経由地は9か所まで有効（10か所目以降はエラーなしで切り捨て、実機確認済み）
+   なので、1本のリンクは出発地＋経由地9＋目的地（10区間）までに分ける */
+const GM_MAX_WAYPOINTS = 9;
+function renderPlanLinks(){
+  const el = $("#gmLinks");
+  if (!state.start || !state.legs.length){ el.innerHTML = ""; return; }
+  const pts = [state.start, ...state.legs.map(l => l.to)], out = [];
+  const per = GM_MAX_WAYPOINTS + 1;   // 1本あたりの区間数
+  for (let i = 0; i < pts.length - 1; i += per){
+    const seg = pts.slice(i, i + per + 1), a = i + 1, b = i + seg.length - 1;
+    out.push(`<a href="${gmDir(seg)}" target="_blank" rel="noopener">Googleマップで開く${pts.length > per + 1 ? `（${a === b ? a : `${a}〜${b}`}区間目）` : ""}</a>`);
+  }
+  el.innerHTML = out.join("");
 }
 
 /* ===== 起点・自宅・保存 ===== */
