@@ -172,7 +172,7 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
   <section class="panel" aria-label="操作パネル">
     <div class="phead">
       <span id="fileName">寄り道ウォーカー</span>
-      <small id="ver" style="color:var(--muted);font-size:11px">v2026-09-23b</small>
+      <small id="ver" style="color:var(--muted);font-size:11px">v2026-09-23c</small>
       <button id="btnSetup" type="button">ルート・キー</button>
     </div>
     <div class="readout" aria-live="polite">
@@ -248,6 +248,13 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
         <label class="chk"><input type="checkbox" id="cVoice"> 読み上げ</label>
         <label class="chk"><input type="checkbox" id="cWait" checked> 読み上げ中は進まない</label>
         <label class="chk"><input type="checkbox" id="cTurn"> 曲がり角も案内</label>
+        <label>AIの話し方
+          <select id="sTone">
+            <option value="plain">簡潔</option>
+            <option value="guide" selected>ガイド風</option>
+            <option value="trivia">うんちく多め</option>
+          </select>
+        </label>
         <label>所要時間の目安
           <select id="sPace">
             <option value="0">言わない</option>
@@ -352,6 +359,8 @@ const CFG = {
   aiWindowM: 1500,      // AI案内をまとめて作る区間の長さ
   guideMode: "template",// off / template / ai
   turnGuide: false,     // 曲がり角の案内（初期はオフ）
+  tone: "guide",        // AI案内の話し方: plain / guide / trivia
+  toneStorage: "yorimichi.tone",
   areaDetail: false,    // 町名が変わるたびの案内（初期はオフ。市区町村の変化だけ案内）
   voice: false,
   waitSpeech: true,
@@ -1086,6 +1095,7 @@ function play(){
   if (state.i >= state.pts.length - 1) show(0);
   state.playing = true; $("#bPlay").textContent = "一時停止";
   unlockSpeech();
+  { const d = state.pts[state.i].d; for (const e of state.events) if (e.d >= d) e.spoken = false; }   // 再生し直したら、この先の案内はもう一度読む
   if (state.i === 0) afterMove(-1, 0);
   tick();
 }
@@ -1550,10 +1560,14 @@ function initSpotUI(){
   $("#cVoice").onchange = e => { CFG.voice = e.target.checked; if (CFG.voice) unlockSpeech(); else if (window.speechSynthesis) speechSynthesis.cancel(); };
   $("#cWait").onchange = e => { CFG.waitSpeech = e.target.checked; };
   $("#cTurn").onchange = e => { CFG.turnGuide = e.target.checked; };
+  const st0 = sGet(CFG.toneStorage);
+  if (st0) CFG.tone = st0;
+  $("#sTone").value = CFG.tone;
+  $("#sTone").onchange = e => { CFG.tone = e.target.value; sSet(CFG.toneStorage, e.target.value); resetAI(); };
   const sp = sGet(CFG.paceStorage);
   if (sp !== "") CFG.paceKmh = +sp;
   $("#sPace").value = String(CFG.paceKmh);
-  $("#sPace").onchange = e => { CFG.paceKmh = +e.target.value; sSet(CFG.paceStorage, e.target.value === "5" ? "" : e.target.value); for (const x of state.events) x.ai = undefined; state.aiWin.clear(); };
+  $("#sPace").onchange = e => { CFG.paceKmh = +e.target.value; sSet(CFG.paceStorage, e.target.value === "5" ? "" : e.target.value); resetAI(); };
   guideStatus();
 }
 function syncLayers(){ for (const k in POI_CATS){ if (POI_CATS[k].on) poiLayers[k].addTo(map); else poiLayers[k].remove(); } }
@@ -1701,9 +1715,9 @@ const textFor = e => (CFG.guideMode === "ai" && e.ai) ? e.ai : templateText(e);
 
 /* 移動のたびに呼ぶ：通過した地点の案内を出す */
 function afterMove(fromD, toD){
-  if (toD < fromD){ for (const e of state.events) if (e.d > toD) e.spoken = false; state.lastArea = null; return; }
+  if (toD < fromD){ for (const e of state.events) e.spoken = false; state.lastArea = null; return; }   // 戻ったら案内済みを全部リセット
   if (CFG.guideMode === "off" || !state.events.length) return;
-  wikiPrefetch(toD); areaPrefetch(toD); areaCheck(toD);
+  wikiPrefetch(toD); areaPrefetch(toD);
   const jump = toD - fromD;
   if (!state.playing && jump > Math.max(400, CFG.stepM * 3)) return;   // 手動で遠くへ飛んだときは案内しない
   const hit = state.events.filter(e => e.d > fromD && e.d <= toD && !e.spoken && eventOn(e));
@@ -1716,6 +1730,7 @@ function afterMove(fromD, toD){
     const usedAI = CFG.guideMode === "ai" && pick.some(e => e.ai);
     announce(text, prio.length > 0, usedAI ? "AI" : "定型");
   }
+  areaCheck(toD);          // 地名は最後（スポットやチェックポイントの案内を優先する）
   if (CFG.guideMode === "ai") aiPrefetch(toD);
 }
 
@@ -1876,6 +1891,7 @@ function aiFacts(e){
   else if (e.type === "km"){ f.km = e.km; f.remaining_km = +e.rest.toFixed(1); if (CFG.paceKmh > 0){ f.elapsed_at_assumed_pace = hm(e.km); f.assumed_pace_kmh = CFG.paceKmh; } }
   return f;
 }
+function resetAI(){ for (const x of state.events) x.ai = undefined; state.aiWin.clear(); guideStatus(); if (CFG.guideMode === "ai" && state.pts.length) aiPrefetch(state.pts[state.i].d); }
 async function aiPrefetch(d){
   const px = proxyBase();
   if (!px || !state.code) return;
@@ -1886,7 +1902,19 @@ async function aiPrefetch(d){
     state.aiWin.add(w);
     if (!evs.length) continue;
     const total = state.grid[state.grid.length - 1].d;
-    const body = { code: state.code, context: { route_total_km: +(total/1000).toFixed(1), route_name: state.name.slice(0, 60) }, events: evs.map(aiFacts) };
+    const recent = state.events.filter(e => e.ai).slice(-3).map(e => e.ai);
+    const here = state.areas.get(Math.floor(d / CFG.areaStepM) * CFG.areaStepM);
+    const body = {
+      code: state.code, tone: CFG.tone,
+      context: {
+        route_total_km: +(total/1000).toFixed(1), route_name: state.name.slice(0, 60),
+        current_km: +(d/1000).toFixed(1),
+        area: here && here.city ? `${here.pref || ""}${here.city}${here.ward || ""}` : null,
+        area_intro: here && here.city ? state.cityWiki.get(here.city) || null : null,
+        recent_lines: recent
+      },
+      events: evs.map(aiFacts)
+    };
     try{
       const r = await fetch(px + "/guide", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (r.status === 401){ guideStatus("AI案内：合言葉が無効です（定型文で案内します）"); return; }
