@@ -172,7 +172,7 @@ dialog p{margin:0 0 14px; color:var(--muted); font-size:13px; max-width:60ch}
   <section class="panel" aria-label="操作パネル">
     <div class="phead">
       <span id="fileName">寄り道ウォーカー</span>
-      <small id="ver" style="color:var(--muted);font-size:11px">v2026-09-23c</small>
+      <small id="ver" style="color:var(--muted);font-size:11px">v2026-09-23d</small>
       <button id="btnSetup" type="button">ルート・キー</button>
     </div>
     <div class="readout" aria-live="polite">
@@ -718,6 +718,7 @@ async function connectionTest(){
   if (proxyBase()){
     await run("BRouter 中継", routeBRouter, true);
     await run("OSRM 中継", routeOSRM, true);
+    if (lines.some(l => l.startsWith("×") && l.includes("中継"))) lines.push(await diagnoseProxy());
   } else lines.push("（中継用URLが未設定のため、中継のテストは省略）");
   out.textContent = lines.join("\n");
   if (!$("#expIn").value.trim()) sSet(CFG.expStorage, saved);
@@ -1975,6 +1976,19 @@ function setMain(which){
 }
 $("#bExport").onclick = exportGPX;
 $("#bSwap").onclick = () => setMain(document.body.dataset.main === "sv" ? "map" : "sv");
+
+/* 中継が失敗したとき、サーバーに届いていないのか、届いているのにブラウザが結果を捨てているのか（CORS）を切り分ける。
+   mode:"no-cors" なら、CORSの許可がなくても「届いたかどうか」だけは分かる。 */
+async function diagnoseProxy(){
+  const px = proxyBase();
+  if (!px) return "";
+  try{
+    await fetch(px + "/route?engine=osrm&coords=139.6172,35.5069;139.62,35.5100", { mode: "no-cors" });
+    return `→ Workerには届いています。ALLOWED_ORIGIN が「${location.origin}」と一致しているか確認し、変更したらデプロイしてください。`;
+  }catch(e){
+    return `→ Workerに届いていません（${e.message}）。中継用URLの綴り、デプロイの有無、ネットワークを確認してください。`;
+  }
+}
 
 /* ---------- UI wiring ---------- */
 const dlg = $("#setup");
