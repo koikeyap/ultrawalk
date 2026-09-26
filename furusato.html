@@ -421,6 +421,7 @@ async function fetchAll(force){
     for (let n = 1; n <= Math.min(pages, pageCount); n++){
       status(`取得しています ${n}/${Math.min(pages, pageCount)}（保存から ${reused} ページ、新規 ${fresh} ページ）`);
       let rec = force ? null : await dbGet("pages", key + "#" + n);
+      if (rec && !rec.items.length && rec.count > 0) rec = null; // 以前に保存された「該当があるのに0件」の応答は使わない
       if (rec){ reused++; }
       else{
         const j = await post("/rakuten", { ...base, params: { ...p, page: n } });
