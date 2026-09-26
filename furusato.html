@@ -415,7 +415,7 @@ async function fetchAll(force){
   const key = paramsKey(p), c = conn();
   const base = c.code ? { code: c.code, appId: c.appId, accessKey: c.accessKey } : { appId: c.appId, accessKey: c.accessKey };
   const seen = new Set(), list = [];
-  let reused = 0, fresh = 0, total = null, pageCount = pages;
+  let reused = 0, fresh = 0, total = null, pageCount = pages, debugKeys = null;
   Stage.resetKpi(); Stage.startTimer("取得中");
   try{
     for (let n = 1; n <= Math.min(pages, pageCount); n++){
@@ -425,8 +425,11 @@ async function fetchAll(force){
       else{
         const j = await post("/rakuten", { ...base, params: { ...p, page: n } });
         rec = { fetchedAt: Date.now(), count: j.count, pageCount: j.pageCount, items: j.items };
-        await dbPut("pages", key + "#" + n, rec);
-        await dbPutMany("items", j.items.map(x => [x.code, x]));
+        if (j.debug_keys) debugKeys = j.debug_keys;
+        if (j.items.length || !j.count){ // 該当があるのに0件だった応答は保存しない（次回また取りに行く）
+          await dbPut("pages", key + "#" + n, rec);
+          await dbPutMany("items", j.items.map(x => [x.code, x]));
+        }
         fresh++;
         if (n < pages) await sleep(1100); // 続けて呼びすぎるとエラーになるため間隔を空ける
       }
@@ -438,6 +441,10 @@ async function fetchAll(force){
   } finally { Stage.stopTimer("取得完了"); }
   S.items = list;
   LS.set("lastKey", key);
+  if (!list.length && total > 0){
+    status(`楽天は該当${total}件と返しましたが、商品を読み取れませんでした。Workerの応答形式が想定と違う可能性があります（応答のキー: ${(debugKeys || []).join(", ") || "不明"}）。この文言を教えてください。`, true);
+    await loadJudge(); renderAll(); updateCacheNote(); return;
+  }
   status(`${list.length}件を取得しました（楽天の該当は全${total == null ? "?" : total.toLocaleString("ja-JP")}件のうち先頭から。保存から${reused}ページ、新規${fresh}ページ）`);
   await loadJudge(); renderAll(); updateCacheNote();
 }
