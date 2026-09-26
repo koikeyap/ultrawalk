@@ -1,0 +1,933 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ふるさと納税 Jev仕分けライン</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#08110e; --bg2:#0d1a15; --panel:#101d18; --card:#152720; --line:#25382f; --ink:#e8f4ee; --muted:#8fa79b;
+  --accent:#3fe0b0; --accent-ink:#04211a; --blue:#6cc0ff; --warn:#ff8a6b; --danger:#ff6b6b;
+  --jp:"BIZ UDPGothic","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+  --num:"Barlow Semi Condensed","Helvetica Neue",Arial,sans-serif;
+  --glow:rgba(63,224,176,.28);
+}
+@media (prefers-color-scheme:light){
+  :root{--bg:#eef4f0; --bg2:#e2ece6; --panel:#fff; --card:#f4f9f6; --line:#cddbd2; --ink:#17231d; --muted:#586b60;
+    --accent:#0f8a68; --accent-ink:#fff; --blue:#1d78c1; --warn:#c2482a; --danger:#c73a3a; --glow:rgba(15,138,104,.22)}
+}
+/* 録画モードは、環境にかかわらず暗い配色で固定（動画で映えるように） */
+body.rec{--bg:#08110e; --bg2:#0d1a15; --panel:#101d18; --card:#152720; --line:#25382f; --ink:#e8f4ee; --muted:#8fa79b;
+  --accent:#3fe0b0; --accent-ink:#04211a; --blue:#6cc0ff; --warn:#ff8a6b; --danger:#ff6b6b; --glow:rgba(63,224,176,.28)}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0}
+body{background:radial-gradient(1200px 600px at 15% -10%,var(--bg2),transparent 60%),var(--bg);color:var(--ink);
+  font-family:var(--jp);font-size:15px;line-height:1.5;padding:0 16px 48px;min-height:100vh}
+main{max-width:1180px;margin:0 auto}
+button,input,select,textarea{font:inherit;color:inherit}
+button{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:8px 14px;cursor:pointer;touch-action:manipulation}
+button:disabled{opacity:.45;cursor:default}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+input[type=text],input[type=password],input[type=number],input[type=url],textarea,select{
+  width:100%;font-size:16px;border:1px solid var(--line);border-radius:8px;padding:7px 9px;background:var(--bg);min-width:0}
+textarea{min-height:88px;resize:vertical}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:2px}
+.chk{display:inline-flex;gap:6px;align-items:center;font-size:14px;color:var(--ink);margin:0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row.end{margin-top:10px}
+.note{font-size:12px;color:var(--muted);margin:6px 0 0}
+[hidden]{display:none!important}
+
+/* ---- ヘッダー ---- */
+header.top{display:flex;gap:10px 16px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:18px 0 12px}
+header.top h1{margin:0;font-size:22px;letter-spacing:.02em;line-height:1.25}
+header.top h1 small{display:block;font-size:12px;font-weight:400;color:var(--muted);letter-spacing:0;margin-top:2px}
+.badge{display:inline-block;font-family:var(--num);font-size:12px;font-weight:700;letter-spacing:.08em;padding:2px 9px;border-radius:999px;border:1px solid var(--accent);color:var(--accent);vertical-align:middle;margin-left:8px}
+.badge.demo{border-color:var(--warn);color:var(--warn)}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tools select{width:auto;padding:6px 8px;font-size:14px}
+
+/* ---- KPI ---- */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.kpi{position:relative;background:linear-gradient(160deg,var(--panel),var(--card));border:1px solid var(--line);border-radius:14px;padding:12px 14px 12px;overflow:hidden}
+.kpi::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--accent);opacity:.9}
+.kpi.b::before{background:var(--blue)} .kpi.w::before{background:var(--warn)}
+.kpi .l{font-size:12px;color:var(--muted);letter-spacing:.04em}
+.kpi .v{font-family:var(--num);font-weight:600;font-size:38px;line-height:1.05;font-variant-numeric:tabular-nums;margin-top:2px;display:flex;align-items:baseline;gap:6px}
+.kpi .v small{font-size:15px;color:var(--muted);font-weight:500}
+.kpi .s{font-size:12px;color:var(--muted);min-height:1.2em}
+.kpi .pb{height:5px;border-radius:3px;background:var(--line);margin-top:6px;overflow:hidden}
+.kpi .pb i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--blue));transition:width .35s ease}
+.kpi.pulse{animation:kpulse .5s ease}
+@keyframes kpulse{0%{box-shadow:0 0 0 0 var(--glow)}100%{box-shadow:0 0 0 14px transparent}}
+
+/* ---- 仕分けライン ---- */
+.stage{grid-template-columns:minmax(0,1fr);margin-top:12px;background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);border-radius:18px;padding:12px 14px 14px;display:grid;grid-template-rows:auto auto 1fr;gap:12px;min-height:560px;position:relative;overflow:hidden}
+.lane{display:flex;align-items:center;gap:10px;min-height:44px;border:1px solid var(--line);border-radius:12px;padding:6px 10px;background:rgba(127,127,127,.06)}
+.tag{font-family:var(--num);font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--accent);border:1px solid var(--accent);border-radius:6px;padding:1px 8px;white-space:nowrap}
+.lane .chips{display:flex;gap:5px;overflow:hidden;flex:1;min-width:0}
+.lane .more{font-family:var(--num);font-size:13px;color:var(--muted);white-space:nowrap}
+.scanner{grid-template-columns:minmax(0,1fr);position:relative;display:grid;justify-items:center;gap:8px;padding:14px 10px 10px;border-radius:16px;border:1px solid var(--line);
+  background:repeating-linear-gradient(90deg,transparent 0 23px,rgba(127,127,127,.07) 23px 24px),rgba(127,127,127,.05)}
+.scanner::before,.scanner::after{content:"";position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.55}
+.scanner::before{top:0}.scanner::after{bottom:0}
+.frame{position:relative;width:min(380px,92%);min-height:84px;display:grid;align-items:center}
+.frame i.cn{position:absolute;width:16px;height:16px;border:2px solid var(--accent);opacity:.9}
+.frame i.cn:nth-child(1){left:-8px;top:-8px;border-right:0;border-bottom:0;border-radius:6px 0 0 0}
+.frame i.cn:nth-child(2){right:-8px;top:-8px;border-left:0;border-bottom:0;border-radius:0 6px 0 0}
+.frame i.cn:nth-child(3){left:-8px;bottom:-8px;border-right:0;border-top:0;border-radius:0 0 0 6px}
+.frame i.cn:nth-child(4){right:-8px;bottom:-8px;border-left:0;border-top:0;border-radius:0 0 6px 0}
+.slot{min-height:84px;display:grid;align-items:center}
+.idle{color:var(--muted);font-size:13px;text-align:center;padding:6px}
+.mc{position:relative;display:flex;gap:10px;align-items:center;padding:9px 10px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;width:100%}
+.mc .th{flex:none;width:58px;height:58px;border-radius:9px;object-fit:cover;background:var(--bg2);display:grid;place-items:center;font-size:30px;font-style:normal;overflow:hidden}
+.mc .th.ini{font-size:24px;font-weight:700;color:var(--accent)}
+.mc .mt{min-width:0}
+.mc .mt b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:14px;line-height:1.35}
+.mc .mt span{font-family:var(--num);font-size:14px;color:var(--muted)}
+.mc.scan::after{content:"";position:absolute;left:0;right:0;top:0;height:42%;background:linear-gradient(to bottom,transparent,var(--glow),rgba(63,224,176,.6),var(--glow),transparent);animation:sweep .75s linear infinite;pointer-events:none}
+@keyframes sweep{from{transform:translateY(-100%)}to{transform:translateY(250%)}}
+.readout{max-width:100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;min-height:30px;font-size:13px;color:var(--muted)}
+.readout .g{width:190px;height:8px;border-radius:5px;background:var(--line);overflow:hidden}
+.readout .g i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--blue),var(--accent))}
+.readout .pct{font-family:var(--num);font-size:24px;font-weight:600;color:var(--ink);min-width:3.2em;text-align:right;font-variant-numeric:tabular-nums}
+.readout .verdict{font-weight:700}
+.readout .verdict.ok{color:var(--accent)} .readout .verdict.no{color:var(--warn)} .readout .verdict.ex{color:var(--danger)}
+.readout .cat{border-radius:999px;padding:2px 12px;font-weight:700;color:#04140f;background:hsl(var(--h,170) 70% 62%);animation:pop .3s cubic-bezier(.2,1.4,.4,1)}
+.readout.wait .dots::after{content:"";animation:dots 1s steps(4) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+@keyframes pop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
+
+.bins{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(96px,1fr);gap:8px;overflow-x:auto;padding-bottom:4px;min-height:0}
+.bin{--h:170;display:flex;flex-direction:column;min-height:180px;border:1px solid var(--line);border-top:3px solid hsl(var(--h) 70% 58%);border-radius:12px;background:rgba(127,127,127,.06);transition:box-shadow .25s,background .25s}
+.bin.ex{--h:8}
+.bin.skip{--h:200;filter:saturate(.35);opacity:.9}
+.bin.hit{box-shadow:0 0 0 2px hsl(var(--h) 80% 60%/.7),0 0 30px hsl(var(--h) 80% 55%/.4);background:hsl(var(--h) 60% 50%/.12)}
+.bin-h{display:flex;align-items:baseline;justify-content:space-between;gap:6px;padding:8px 10px 2px}
+.bin-t{font-size:12px;line-height:1.3;font-weight:700;overflow-wrap:anywhere}
+.bin-n{font-family:var(--num);font-size:28px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums;color:hsl(var(--h) 75% 62%)}
+.bin-s{display:flex;flex-wrap:wrap;gap:4px;align-content:flex-start;padding:8px;flex:1;overflow:hidden}
+.mini{width:28px;height:28px;border-radius:7px;overflow:hidden;display:grid;place-items:center;font-size:16px;background:hsl(var(--h,170) 45% 26%);color:#fff;font-weight:700;flex:none}
+.mini img{width:100%;height:100%;object-fit:cover}
+.mini.new{animation:pop .35s cubic-bezier(.2,1.4,.4,1)}
+.bin.skip .mini,.bin.ex .mini{background:hsl(var(--h) 20% 30%)}
+.fly{pointer-events:none;box-shadow:0 12px 36px rgba(0,0,0,.45)}
+
+body.rec header.top .tools .hide-rec,body.rec #panels,body.rec #viewBox,body.rec #status,body.rec .lead,body.rec footer.foot{display:none!important}
+body.rec .stage{min-height:calc(100vh - 220px)}
+body.rec .kpi .v{font-size:clamp(28px,5vw,46px)}
+body.rec .recbar{display:flex}
+.recbar{display:none;position:fixed;right:14px;bottom:12px;gap:8px;z-index:60;opacity:0;transition:opacity .2s}
+.recbar:hover,.recbar:focus-within{opacity:1}
+
+/* ---- 設定・一覧 ---- */
+section.box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:12px}
+section.box h2{font-size:15px;margin:0 0 8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+details summary{cursor:pointer;font-size:14px}
+#status{margin-top:12px;min-height:1.4em;font-size:13px;color:var(--muted)}
+#status.err{color:var(--warn)}
+.chips2{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.chip{padding:4px 11px;border-radius:999px;font-size:13px}
+.chip[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+.cards{display:grid;gap:10px;margin-top:10px}
+.card{display:grid;grid-template-columns:96px 1fr;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px}
+.card .im{width:96px;height:96px;object-fit:cover;border-radius:8px;background:var(--bg2);display:grid;place-items:center;font-size:44px}
+.card h3{font-size:14px;margin:0;line-height:1.4;overflow-wrap:anywhere}
+.card h3 a{color:inherit}
+.meta{font-size:12px;color:var(--muted);margin-top:3px}
+.meta span{margin-right:10px;white-space:nowrap}
+.ctag{display:inline-block;font-size:12px;border-radius:6px;padding:1px 8px;background:rgba(63,224,176,.16);color:var(--ink);margin-right:6px}
+.fit{font-weight:700;font-variant-numeric:tabular-nums}
+.bar{height:5px;border-radius:3px;background:var(--line);margin-top:6px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.count{font-size:13px;color:var(--muted);margin-top:12px}
+footer.foot{margin-top:18px;font-size:12px;color:var(--muted)}
+@media (max-width:640px){
+  .kpi .v{font-size:30px} .card{grid-template-columns:72px 1fr}.card .im{width:72px;height:72px;font-size:32px}
+  .bins{grid-auto-flow:row;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-columns:auto;overflow:visible}
+  .bin{min-height:120px}
+  body.rec .stage{min-height:0}
+}
+@media (prefers-reduced-motion:reduce){.mc.scan::after,.readout.wait .dots::after{animation:none}}
+</style>
+</head>
+<body>
+<main>
+<header class="top">
+  <h1>ふるさと納税 × Jev 仕分けライン<span class="badge" id="modeBadge">LIVE</span>
+    <small id="modeNote">楽天の返礼品を取得 → 条件で除外 → Jevが好みに合うか判定して分類</small></h1>
+  <div class="tools">
+    <button id="btnDemo" class="primary">▶ デモ再生</button>
+    <button id="btnRec">🎬 録画モード</button>
+    <label class="chk hide-rec"><input id="demoLoop" type="checkbox"> デモを繰り返す</label>
+    <label class="chk hide-rec"><input id="fx" type="checkbox" checked> 演出</label>
+    <select id="speed" aria-label="演出の速さ"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="3">3×</option></select>
+  </div>
+</header>
+
+<section class="kpis" aria-label="集計">
+  <div class="kpi"><div class="l">取得件数</div><div class="v"><span id="k-fetched" data-v="0">0</span><small>件</small></div><div class="s" id="k-fetched-s">楽天から取得</div></div>
+  <div class="kpi w"><div class="l">除外</div><div class="v"><span id="k-ex" data-v="0">0</span><small>件</small></div><div class="s">除外ワード・評価の下限</div></div>
+  <div class="kpi b"><div class="l">判定済み</div><div class="v"><span id="k-judged" data-v="0">0</span><small id="k-total">/ 0</small></div><div class="pb"><i id="k-bar"></i></div></div>
+  <div class="kpi"><div class="l">一致（好みに合う）</div><div class="v"><span id="k-match" data-v="0">0</span><small>件</small></div><div class="s" id="k-rate">-</div></div>
+  <div class="kpi b"><div class="l">平均の一致度</div><div class="v"><span id="k-avg" data-v="0">-</span></div><div class="s">判定済みの平均</div></div>
+  <div class="kpi"><div class="l">経過時間</div><div class="v"><span id="k-time">00:00.0</span></div><div class="s" id="k-time-s">待機中</div></div>
+</section>
+
+<section class="stage" id="stage" aria-label="仕分けライン">
+  <div class="lane" id="inbox"><span class="tag">取得</span><div class="chips" id="inboxChips"></div><span class="more" id="inboxMore"></span></div>
+  <div class="scanner" id="scanner">
+    <div class="frame"><i class="cn"></i><i class="cn"></i><i class="cn"></i><i class="cn"></i><div class="slot" id="slot"><div class="idle">「▶ デモ再生」か、取得→判定で始まります</div></div></div>
+    <div class="readout" id="readout"><span class="tag">JEV</span><span id="roText">待機中</span></div>
+  </div>
+  <div class="bins" id="bins" aria-label="分類"></div>
+</section>
+
+<div class="recbar"><button id="btnRecOff">録画モードを終了（Esc）</button></div>
+
+<div id="panels">
+<section class="box">
+  <details id="setup">
+    <summary>接続設定（Worker・合言葉・楽天キー）</summary>
+    <div class="grid" style="margin-top:10px">
+      <div><label for="worker">WorkerのURL</label><input id="worker" type="url" placeholder="https://xxxx.workers.dev"></div>
+      <div><label for="code">合言葉（知っていればこれだけでOK）</label><input id="code" type="password" autocomplete="off"></div>
+      <div><label for="appId">楽天アプリID（合言葉がないとき）</label><input id="appId" type="text" autocomplete="off"></div>
+      <div><label for="accessKey">楽天アクセスキー（合言葉がないとき）</label><input id="accessKey" type="password" autocomplete="off"></div>
+    </div>
+    <div class="row end"><button id="btnSave" class="primary">保存して確認</button></div>
+    <p class="note">合言葉が合えば、Workerに登録済みの楽天キーとJevキーを使います。合言葉がない場合は画面で入れた楽天キーで取得します（Jev判定には合言葉が必要）。入力した値はこの端末のブラウザにだけ保存します。</p>
+  </details>
+</section>
+
+<section class="box">
+  <h2>取得条件（楽天API側で絞る）</h2>
+  <div class="grid">
+    <div><label for="kw">キーワード</label><input id="kw" type="text" value="ふるさと納税 登山 ウォーキング"></div>
+    <div><label for="ng">除外ワード（API側・空白区切り）</label><input id="ng" type="text" placeholder="例 定期便 訳あり"></div>
+    <div><label for="minP">最低寄付額（円）</label><input id="minP" type="number" inputmode="numeric" min="1" step="1000"></div>
+    <div><label for="maxP">最高寄付額（円）</label><input id="maxP" type="number" inputmode="numeric" min="1" step="1000"></div>
+    <div><label for="sort">並び順</label>
+      <select id="sort"><option value="standard">楽天標準</option><option value="-reviewCount">レビュー数が多い順</option><option value="-reviewAverage">評価が高い順</option><option value="+itemPrice">寄付額が安い順</option><option value="-updateTimestamp">更新が新しい順</option></select></div>
+    <div><label for="pages">取得ページ数（1ページ30件）</label><input id="pages" type="number" inputmode="numeric" min="1" max="20" value="3"></div>
+  </div>
+  <div class="row end">
+    <label class="chk"><input id="fAvail" type="checkbox" checked> 在庫ありのみ</label>
+    <label class="chk"><input id="fReview" type="checkbox"> レビューありのみ</label>
+    <label class="chk"><input id="fImage" type="checkbox" checked> 画像ありのみ</label>
+  </div>
+  <div class="row end">
+    <button id="btnFetch" class="primary">取得（保存済みは再利用）</button>
+    <button id="btnRefetch">再取得（保存を無視）</button>
+    <button id="btnClear">保存データを消す</button>
+  </div>
+  <p class="note" id="cacheNote"></p>
+</section>
+
+<section class="box">
+  <h2>取得後の除外（この端末で絞る）</h2>
+  <div class="grid">
+    <div><label for="exWords">除外ワード（商品名・説明・店名のどれかに含む・空白区切り）</label><input id="exWords" type="text" placeholder="例 セット 定期便 ペット"></div>
+    <div><label for="minRv">評価の下限（レビューがある商品のみ）</label><input id="minRv" type="number" inputmode="decimal" min="0" max="5" step="0.1" value="0"></div>
+  </div>
+  <p class="note">ここで外したものはJev判定にも回しません。</p>
+</section>
+
+<section class="box">
+  <h2>好み（Jevの判断材料）</h2>
+  <label for="profile">好みと避けたいもの（自由に）</label>
+  <textarea id="profile">ウォーキングや登山で使えるもの。ウェア、靴下、ザック、トレッキング用品、行動食など。
+避けたいもの：お酒、ペット用品、家電、寝具。</textarea>
+  <label for="cats" style="margin-top:8px">分類（カンマ区切り・2〜12個）</label>
+  <input id="cats" type="text" value="ウェア・靴下, シューズ・ケア用品, バッグ・ザック, ギア・小物, 行動食・補給食, 飲料, その他の食品, その他・対象外">
+  <div class="row end">
+    <button id="btnJudge" class="primary">未判定を判定する</button>
+    <button id="btnRejudge">判定をやり直す</button>
+  </div>
+  <p class="note">好みか分類を変えると、新しい条件で判定し直します（古い判定も残ります）。10件ずつ送ります。</p>
+</section>
+</div>
+
+<div id="status" aria-live="polite"></div>
+
+<section class="box" id="viewBox" hidden>
+  <h2>一覧</h2>
+  <div class="grid">
+    <div><label for="thr">一致度のしきい値（<span id="thrV">50</span>%以上を「一致」とする）</label><input id="thr" type="range" min="0" max="100" step="5" value="50"></div>
+    <div><label for="vsort">表示順</label>
+      <select id="vsort"><option value="fit">一致度が高い順</option><option value="price">寄付額が安い順</option><option value="rv">レビュー数が多い順</option></select></div>
+  </div>
+  <div class="row end"><label class="chk"><input id="showUn" type="checkbox"> 未判定も表示する</label></div>
+  <div class="chips2" id="catChips"></div>
+  <div class="count" id="count"></div>
+  <div class="cards" id="cards"></div>
+  <div class="row end"><button id="btnExport">JSONで書き出す（表示中）</button><button id="btnExportAll">JSONで書き出す（全件）</button></div>
+</section>
+<footer class="foot">デモの商品名・一致度はサンプルです（実在の返礼品ではなく、Jevの判定でもありません）。LIVEの一致度はTypeSafe Jevの判定値です。</footer>
+</main>
+
+<script>
+"use strict";
+/* ===== 小道具 ===== */
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+var sleep = ms => new Promise(r => setTimeout(r, ms));
+const DEFAULT_WORKER = "https://shortlink.taiji007ai.workers.dev";
+const LS = {
+  get(k, d){ try{ const v = localStorage.getItem("frj." + k); return v == null ? d : v; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem("frj." + k, v); }catch(e){} },
+};
+function status(msg, err){ const el = $("#status"); el.textContent = msg || ""; el.classList.toggle("err", !!err); }
+function hash(s){ // 保存キー用の簡易ハッシュ（暗号用途ではない）
+  let a = 0x811c9dc5, b = 5381;
+  for (let i = 0; i < s.length; i++){ const c = s.charCodeAt(i); a ^= c; a = Math.imul(a, 16777619); b = (Math.imul(b, 33) ^ c) | 0; }
+  return (a >>> 0).toString(16).padStart(8, "0") + (b >>> 0).toString(16).padStart(8, "0");
+}
+const words = s => String(s || "").split(/[\s　]+/).map(x => x.trim()).filter(Boolean);
+const yen = n => n == null ? "-" : Number(n).toLocaleString("ja-JP") + "円";
+const mmss = ms => { const t = Math.max(0, ms) / 1000, m = Math.floor(t / 60), s = t - m * 60; return String(m).padStart(2, "0") + ":" + s.toFixed(1).padStart(4, "0"); };
+
+/* ===== 保存（IndexedDB。使えない環境ではメモリに切り替える＝プレビュー等で動くように） ===== */
+const MEM = { pages: new Map(), items: new Map(), judge: new Map() };
+let dbP = null, dbBroken = false;
+function db(){
+  if (dbP) return dbP;
+  dbP = new Promise((res, rej) => {
+    if (typeof indexedDB === "undefined" || !indexedDB || !indexedDB.open){ rej(new Error("no idb")); return; }
+    const r = indexedDB.open("furusato-jev", 1);
+    r.onupgradeneeded = () => { const d = r.result; d.createObjectStore("pages"); d.createObjectStore("items"); d.createObjectStore("judge"); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  return dbP;
+}
+async function safe(fn, mem){
+  if (dbBroken) return mem();
+  try{ return await fn(); }catch(e){ dbBroken = true; return mem(); }
+}
+function txRun(store, mode, fn){
+  return db().then(d => new Promise((res, rej) => {
+    const tx = d.transaction(store, mode), st = tx.objectStore(store);
+    let out; try{ out = fn(st); }catch(e){ rej(e); return; }
+    tx.oncomplete = () => res(out && "result" in out ? out.result : undefined);
+    tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
+  }));
+}
+var dbGet = (s, k) => safe(() => txRun(s, "readonly", st => st.get(k)), () => MEM[s].get(k));
+var dbPut = (s, k, v) => safe(() => txRun(s, "readwrite", st => { st.put(v, k); }), () => { MEM[s].set(k, v); });
+var dbClear = s => safe(() => txRun(s, "readwrite", st => { st.clear(); }), () => { MEM[s].clear(); });
+function dbGetMany(s, keys){
+  return safe(() => db().then(d => new Promise((res, rej) => {
+    const tx = d.transaction(s, "readonly"), st = tx.objectStore(s), out = new Array(keys.length);
+    keys.forEach((k, i) => { const r = st.get(k); r.onsuccess = () => { out[i] = r.result; }; });
+    tx.oncomplete = () => res(out); tx.onerror = () => rej(tx.error);
+  })), () => keys.map(k => MEM[s].get(k)));
+}
+function dbPutMany(s, entries){
+  if (!entries.length) return Promise.resolve();
+  return safe(() => db().then(d => new Promise((res, rej) => {
+    const tx = d.transaction(s, "readwrite"), st = tx.objectStore(s);
+    for (const [k, v] of entries) st.put(v, k);
+    tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+  })), () => { for (const [k, v] of entries) MEM[s].set(k, v); });
+}
+
+/* ===== 状態 ===== */
+const S = { items: [], judge: new Map(), busy: false, catFilter: null, auth: null, mode: "live" };
+const DEMO_CATS = ["ウェア・靴下", "シューズ・ケア用品", "バッグ・ザック", "ギア・小物", "行動食・補給食", "飲料", "その他の食品"];
+function cats(){ return [...new Set($("#cats").value.split(/[,、，]/).map(s => s.trim()).filter(Boolean))].slice(0, 12); }
+const curCats = () => S.mode === "demo" ? DEMO_CATS : cats();
+
+/* ===== 接続 ===== */
+function conn(){
+  return { worker: $("#worker").value.trim().replace(/\/+$/, ""), code: $("#code").value.trim(), appId: $("#appId").value.trim(), accessKey: $("#accessKey").value.trim() };
+}
+async function diagnose(worker){
+  try{
+    const r = await fetch(worker + "/furusato/whoami");
+    if (r.ok){
+      const j = await r.json();
+      if (!j.allowed) return `このページ（ドメイン: ${j.origin_seen || "null"}）がWorkerに許可されていません。Workerの変数 FURUSATO_ORIGINS に「${j.origin_seen || "null"}」を追加してください`;
+      return "Workerには届きましたが、応答を受け取れませんでした。少し待ってからもう一度";
+    }
+    return "Workerにふるさと納税用のコードが未追加のようです（/furusato/whoami が見つかりません）";
+  }catch(e){ return "Workerに接続できません（URLとネットワークを確認してください）"; }
+}
+async function post(path, body, ms = 60000){
+  const c = conn();
+  if (!c.worker) throw new Error("WorkerのURLが未設定です（接続設定を開いてください）");
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
+  let r;
+  try{
+    // Content-Typeを付けない単純なPOST（ブラウザの事前確認を起こさない）
+    r = await fetch(c.worker + "/furusato" + path, { method: "POST", body: JSON.stringify(body), signal: ctl.signal });
+  }catch(e){
+    if (e.name === "AbortError") throw new Error("時間切れ");
+    throw new Error(await diagnose(c.worker));
+  }finally{ clearTimeout(t); }
+  const text = await r.text(); let j = null; try{ j = JSON.parse(text); }catch(e){}
+  if (!r.ok){
+    const m = j && j.error || "";
+    if (m === "invalid code") throw new Error("合言葉が違います");
+    if (m === "no rakuten key") throw new Error("楽天のキーがありません（合言葉か、画面での入力が必要です）");
+    if (m === "jev not configured") throw new Error("WorkerにTYPESAFE_API_KEYが未設定です");
+    if (m === "forbidden origin") throw new Error(`このページ（${j.origin_seen || "null"}）はWorkerに許可されていません。FURUSATO_ORIGINS に追加してください`);
+    if (r.status === 404 && !j) throw new Error("Workerにふるさと納税用のコードが未追加のようです");
+    if (r.status === 429 || (j && j.status === 429)) throw new Error("混み合っています。少し待ってからもう一度");
+    throw new Error((m || "エラー") + (j && j.detail ? "：" + j.detail : "") + ` (${r.status})`);
+  }
+  if (!j) throw new Error("Workerの応答を読めませんでした");
+  return j;
+}
+async function saveConn(){
+  const c = conn();
+  for (const k of ["worker", "code", "appId", "accessKey"]) LS.set(k, c[k]);
+  if (!c.worker){ status("WorkerのURLを入れてください", true); return; }
+  if (!c.code){ S.auth = null; status("保存しました。合言葉がないので、楽天は画面で入れたキーを使い、Jev判定は使えません。"); return; }
+  try{
+    status("確認しています…");
+    S.auth = await post("/auth", { code: c.code }, 15000);
+    status(`合言葉OK。Workerの楽天キー：${S.auth.rakuten ? "あり" : "なし（画面のキーを使います）"}／Jev：${S.auth.jev ? "使えます" : "未設定"}`);
+  }catch(e){ S.auth = null; status(e.message, true); }
+}
+
+/* ===== 取得（ページ単位で保存。同じ条件は再利用） ===== */
+function readParams(){
+  const p = { keyword: $("#kw").value.trim(), NGKeyword: $("#ng").value.trim(), sort: $("#sort").value, hits: 30 };
+  const mn = Number($("#minP").value), mx = Number($("#maxP").value);
+  if (mn > 0) p.minPrice = Math.floor(mn);
+  if (mx > 0) p.maxPrice = Math.floor(mx);
+  p.availability = $("#fAvail").checked ? 1 : 0;
+  if ($("#fReview").checked) p.hasReviewFlag = 1;
+  if ($("#fImage").checked) p.imageFlag = 1;
+  return p;
+}
+const paramsKey = p => hash(JSON.stringify(Object.keys(p).sort().map(k => [k, p[k]])));
+async function fetchAll(force){
+  const p = readParams();
+  if (!p.keyword){ status("キーワードを入れてください", true); return; }
+  leaveDemo();
+  const pages = Math.min(20, Math.max(1, Math.floor(Number($("#pages").value)) || 1));
+  const key = paramsKey(p), c = conn();
+  const base = c.code ? { code: c.code, appId: c.appId, accessKey: c.accessKey } : { appId: c.appId, accessKey: c.accessKey };
+  const seen = new Set(), list = [];
+  let reused = 0, fresh = 0, total = null, pageCount = pages;
+  Stage.resetKpi(); Stage.startTimer("取得中");
+  try{
+    for (let n = 1; n <= Math.min(pages, pageCount); n++){
+      status(`取得しています ${n}/${Math.min(pages, pageCount)}（保存から ${reused} ページ、新規 ${fresh} ページ）`);
+      let rec = force ? null : await dbGet("pages", key + "#" + n);
+      if (rec){ reused++; }
+      else{
+        const j = await post("/rakuten", { ...base, params: { ...p, page: n } });
+        rec = { fetchedAt: Date.now(), count: j.count, pageCount: j.pageCount, items: j.items };
+        await dbPut("pages", key + "#" + n, rec);
+        await dbPutMany("items", j.items.map(x => [x.code, x]));
+        fresh++;
+        if (n < pages) await sleep(1100); // 続けて呼びすぎるとエラーになるため間隔を空ける
+      }
+      total = rec.count; pageCount = rec.pageCount || 1;
+      for (const x of rec.items){ if (!seen.has(x.code)){ seen.add(x.code); list.push(x); } }
+      Stage.tally.fetched = list.length; Stage.kpi();
+      if (!rec.items.length) break;
+    }
+  } finally { Stage.stopTimer("取得完了"); }
+  S.items = list;
+  LS.set("lastKey", key);
+  status(`${list.length}件を取得しました（楽天の該当は全${total == null ? "?" : total.toLocaleString("ja-JP")}件のうち先頭から。保存から${reused}ページ、新規${fresh}ページ）`);
+  await loadJudge(); renderAll(); updateCacheNote();
+}
+
+/* ===== 取得後の除外 ===== */
+function visibleBase(){
+  const ex = words($("#exWords").value).map(w => w.toLowerCase());
+  const minRv = Number($("#minRv").value) || 0;
+  return S.items.filter(x => {
+    if (ex.length){
+      const hay = (x.name + " " + x.catch + " " + x.caption + " " + x.shop).toLowerCase();
+      if (ex.some(w => hay.includes(w))) return false;
+    }
+    if (minRv > 0 && x.rc > 0 && x.ra < minRv) return false;
+    return true;
+  });
+}
+
+/* ===== Jev判定 ===== */
+function judgeKey(){ return hash(($("#profile").value || "").trim() + "|" + cats().join(",")); }
+const jk = code => judgeKey() + "|" + code;
+async function loadJudge(){
+  S.judge = new Map();
+  if (!S.items.length || S.mode === "demo") return;
+  const recs = await dbGetMany("judge", S.items.map(x => jk(x.code)));
+  S.items.forEach((x, i) => { if (recs[i]) S.judge.set(x.code, recs[i]); });
+}
+async function runJudge(redo){
+  const c = conn(), profile = $("#profile").value.trim(), cs = cats();
+  if (S.mode === "demo"){ status("デモ表示中です。「取得」で実データに切り替えてください", true); return; }
+  if (!c.code){ status("Jev判定には合言葉が必要です（接続設定）", true); return; }
+  if (!profile){ status("好みを書いてください", true); return; }
+  if (cs.length < 2){ status("分類は2つ以上入れてください", true); return; }
+  const targets = visibleBase().filter(x => redo || !S.judge.has(x.code));
+  if (!targets.length){ status("判定するものがありません"); return; }
+  const batches = []; for (let i = 0; i < targets.length; i += 10) batches.push(targets.slice(i, i + 10));
+  let done = 0, failed = 0, lastErr = "";
+  Stage.begin(targets, new Set(targets.map(x => x.code)));
+  const worker = async () => {
+    while (batches.length){
+      const b = batches.shift();
+      Stage.waiting(true);
+      try{
+        const j = await post("/jev", { code: c.code, profile, categories: cs,
+          items: b.map(x => ({ name: x.name, catch: x.catch, caption: x.caption, price: x.price })) }, 60000);
+        const ents = [];
+        b.forEach((x, i) => {
+          if (j.fit[i] == null){ Stage.drop(x); return; }
+          const rec = { fit: j.fit[i], cat: j.cat[i], catP: j.catP[i] };
+          S.judge.set(x.code, rec); ents.push([jk(x.code), rec]);
+          Stage.sortItem(x, rec);
+        });
+        await dbPutMany("judge", ents);
+      }catch(e){ failed += b.length; lastErr = e.message; b.forEach(x => Stage.drop(x)); }
+      done += b.length;
+      status(`Jevで判定しています ${Math.min(done, targets.length)}/${targets.length}`);
+    }
+  };
+  try{ await Promise.all([worker(), worker()]); await Stage.idle(); }
+  finally{ Stage.end(); }
+  status(failed ? `判定できなかったものが${failed}件あります（${lastErr}）。もう一度「未判定を判定する」を押すと、残りだけ判定します。` : `${targets.length}件を判定しました`, !!failed);
+  renderAll();
+}
+
+/* ===== 数字のカウントアップ ===== */
+function setNum(el, v, fmt){
+  fmt = fmt || (n => String(Math.round(n)));
+  const from = Number(el.dataset.v) || 0;
+  el.dataset.v = String(v);
+  if (el._raf) cancelAnimationFrame(el._raf);
+  if (!Stage.fx || from === v){ el.textContent = fmt(v); return; }
+  const t0 = performance.now(), d = 420 / Stage.speed;
+  const step = now => {
+    const p = Math.min(1, (now - t0) / d), e = 1 - Math.pow(1 - p, 3);
+    el.textContent = fmt(from + (v - from) * e);
+    if (p < 1) el._raf = requestAnimationFrame(step); else el.textContent = fmt(v);
+  };
+  el._raf = requestAnimationFrame(step);
+}
+function pulse(el){ const k = el.closest(".kpi"); if (!k || !Stage.fx) return; k.classList.remove("pulse"); void k.offsetWidth; k.classList.add("pulse"); }
+const HUES = [165, 200, 35, 275, 340, 55, 120, 15];
+
+/* ===== 仕分けライン（演出）と集計 ===== */
+function tallyFromState(skip){
+  const base = visibleBase(), thr = Number($("#thr").value) / 100;
+  let judged = 0, matched = 0, sum = 0;
+  for (const x of base){
+    const j = S.judge.get(x.code);
+    if (j && !(skip && skip.has(x.code))){ judged++; sum += j.fit; if (j.fit >= thr) matched++; }
+  }
+  return { fetched: S.items.length, excluded: S.items.length - base.length, total: base.length, judged, matched, sumFit: sum };
+}
+const Stage = {
+  speed: 1, fx: true, running: false, abort: false, q: Promise.resolve(),
+  catList: [], binEl: new Map(), binCount: new Map(), pending: [], tally: { fetched: 0, excluded: 0, total: 0, judged: 0, matched: 0, sumFit: 0 },
+  MAXCHIPS: 18, timer: null, t0: 0,
+  thr(){ return Number($("#thr").value) / 100; },
+  hue(key){ const i = this.catList.indexOf(key); return i < 0 ? 200 : HUES[i % HUES.length]; },
+  keyOf(rec){ return rec.fit >= this.thr() && rec.cat && this.binEl.has(rec.cat) ? rec.cat : "__skip"; },
+  async wait(ms){ if (this.abort) throw new Error("abort"); if (!this.fx) return; await sleep(ms / this.speed); if (this.abort) throw new Error("abort"); },
+  anim(el, frames, ms, easing){
+    if (!this.fx || !el.animate) return Promise.resolve();
+    return el.animate(frames, { duration: ms / this.speed, easing: easing || "ease", fill: "both" }).finished.catch(() => {});
+  },
+  enqueue(fn){ this.q = this.q.then(fn).catch(e => { if (!e || e.message !== "abort") console.error(e); }); return this.q; },
+  idle(){ return this.q; },
+
+  /* --- ビン --- */
+  setBins(list){
+    this.catList = list.slice(); this.binEl = new Map(); this.binCount = new Map();
+    const box = $("#bins"); box.innerHTML = "";
+    const defs = [{ key: "__ex", label: "除外", cls: "ex" }, ...list.map((c, i) => ({ key: c, label: c, hue: HUES[i % HUES.length] })), { key: "__skip", label: "見送り（低一致）", cls: "skip" }];
+    for (const d of defs){
+      const b = document.createElement("div"); b.className = "bin " + (d.cls || "");
+      if (d.hue != null) b.style.setProperty("--h", d.hue);
+      b.innerHTML = `<div class="bin-h"><span class="bin-t">${esc(d.label)}</span><b class="bin-n" data-v="0">0</b></div><div class="bin-s"></div>`;
+      box.appendChild(b); this.binEl.set(d.key, b); this.binCount.set(d.key, 0);
+    }
+  },
+  mini(x, key, fresh){
+    const m = document.createElement("div"); m.className = "mini" + (fresh ? " new" : "");
+    m.title = x.name;
+    const h = key === "__ex" ? 8 : key === "__skip" ? 200 : this.hue(key);
+    m.style.setProperty("--h", h);
+    if (x.img) m.innerHTML = `<img src="${esc(x.img)}" alt="" loading="lazy">`;
+    else m.textContent = x.emoji || ([...String(x.name)][0] || "?");
+    return m;
+  },
+  addSilent(key, arr){
+    const b = this.binEl.get(key); if (!b) return;
+    const s = b.querySelector(".bin-s");
+    this.binCount.set(key, (this.binCount.get(key) || 0) + arr.length);
+    for (const x of arr.slice(0, this.MAXCHIPS)) s.appendChild(this.mini(x, key, false));
+    const n = b.querySelector(".bin-n"); n.textContent = String(this.binCount.get(key)); n.dataset.v = String(this.binCount.get(key));
+  },
+  binsFromState(skip){
+    const base = visibleBase(), keep = new Set(base.map(x => x.code));
+    this.addSilent("__ex", S.items.filter(x => !keep.has(x.code)));
+    const g = new Map();
+    for (const x of base){
+      const j = S.judge.get(x.code);
+      if (!j || (skip && skip.has(x.code))) continue;
+      const k = this.keyOf(j); if (!g.has(k)) g.set(k, []); g.get(k).push(x);
+    }
+    for (const [k, arr] of g) this.addSilent(k, arr);
+  },
+  sync(){ // 演出中でないときに、いまのデータから表示を作り直す
+    if (this.running || S.mode === "demo") return;
+    this.setBins(curCats()); this.binsFromState(null);
+    this.tally = tallyFromState(null); this.pending = []; this.renderInbox(); this.kpi();
+  },
+
+  /* --- 集計カード --- */
+  resetKpi(){ this.tally = { fetched: 0, excluded: 0, total: 0, judged: 0, matched: 0, sumFit: 0 }; this.kpi(); $("#k-time").textContent = "00:00.0"; },
+  kpi(){
+    const t = this.tally;
+    setNum($("#k-fetched"), t.fetched); setNum($("#k-ex"), t.excluded); setNum($("#k-judged"), t.judged); setNum($("#k-match"), t.matched);
+    $("#k-total").textContent = "/ " + t.total;
+    $("#k-bar").style.width = (t.total ? Math.min(100, t.judged / t.total * 100) : 0) + "%";
+    $("#k-rate").textContent = t.judged ? `判定済みの ${Math.round(t.matched / t.judged * 100)}%` : "-";
+    setNum($("#k-avg"), t.judged ? t.sumFit / t.judged * 100 : 0, n => t.judged ? Math.round(n) + "%" : "-");
+  },
+  startTimer(label){
+    this.stopTimer(); this.t0 = performance.now(); $("#k-time-s").textContent = label || "実行中";
+    this.timer = setInterval(() => { $("#k-time").textContent = mmss(performance.now() - this.t0); }, 100);
+  },
+  stopTimer(label){
+    if (this.timer){ clearInterval(this.timer); this.timer = null; $("#k-time").textContent = mmss(performance.now() - this.t0); }
+    if (label) $("#k-time-s").textContent = label;
+  },
+
+  /* --- 取得レーン --- */
+  renderInbox(){
+    const box = $("#inboxChips"); box.innerHTML = "";
+    for (const x of this.pending.slice(0, 16)) box.appendChild(this.mini(x, "__pend", false));
+    const rest = this.pending.length - 16;
+    $("#inboxMore").textContent = this.pending.length ? (rest > 0 ? `+${rest}件 待機` : `${this.pending.length}件 待機`) : "";
+  },
+
+  /* --- 読み取り表示 --- */
+  readout(html, cls){ const r = $("#readout"); r.className = "readout " + (cls || ""); r.innerHTML = `<span class="tag">JEV</span>${html}`; },
+  waiting(on){ if (!this.running) return; if (on && !$("#slot").firstElementChild?.classList.contains("mc")) this.readout(`<span>Jev の応答待ち<span class="dots"></span></span>`, "wait"); },
+  cardHtml(x){
+    const th = x.img ? `<img class="th" src="${esc(x.img)}" alt="">` : x.emoji ? `<i class="th">${x.emoji}</i>` : `<i class="th ini">${esc([...String(x.name)][0] || "?")}</i>`;
+    return `<div class="mc">${th}<div class="mt"><b>${esc(x.name)}</b><span>${yen(x.price)}</span></div></div>`;
+  },
+
+  /* --- 実行の開始・終了 --- */
+  begin(targets, skip){
+    this.running = true; this.abort = false; this.q = Promise.resolve();
+    this.setBins(curCats()); this.binsFromState(skip);
+    this.tally = tallyFromState(skip); this.pending = targets.slice(); this.renderInbox(); this.kpi();
+    this.startTimer("判定中"); this.readout(`<span>準備中</span>`, "wait");
+    try{ document.querySelector(".kpis").scrollIntoView({ behavior: this.fx ? "smooth" : "auto", block: "start" }); }catch(e){}
+  },
+  end(){
+    this.running = false; this.stopTimer("完了"); this.pending = []; this.renderInbox();
+    $("#slot").innerHTML = `<div class="idle">完了</div>`; this.readout(`<span>完了</span>`);
+  },
+  drop(x){ this.pending = this.pending.filter(p => p.code !== x.code); this.renderInbox(); },
+  sortItem(x, rec){ return this.enqueue(() => this.sortOne(x, rec)); },
+
+  async enter(x){
+    const slot = $("#slot"); slot.innerHTML = this.cardHtml(x);
+    const card = slot.firstElementChild;
+    await this.anim(card, [{ opacity: 0, transform: "translateY(-54px) scale(.9)" }, { opacity: 1, transform: "none" }], 380, "cubic-bezier(.2,.8,.2,1)");
+    return card;
+  },
+  async fly(card, key, ms){
+    const target = this.binEl.get(key).querySelector(".bin-s");
+    if (this.fx && card.animate){
+      const a = card.getBoundingClientRect(), b = target.getBoundingClientRect();
+      const fl = card.cloneNode(true); fl.classList.remove("scan"); fl.classList.add("fly");
+      fl.style.cssText = `position:fixed;left:${a.left}px;top:${a.top}px;width:${a.width}px;margin:0;z-index:50`;
+      document.body.appendChild(fl); card.style.visibility = "hidden";
+      const dx = b.left + Math.min(b.width, 60) / 2 - (a.left + a.width / 2), dy = b.top + 24 - (a.top + a.height / 2);
+      await this.anim(fl, [
+        { transform: "none", opacity: 1 },
+        { transform: `translate(${dx * .35}px,${dy * .12 - 34}px) scale(.72)`, opacity: 1, offset: .38 },
+        { transform: `translate(${dx}px,${dy}px) scale(.1)`, opacity: .55 }], ms || 560, "cubic-bezier(.55,0,.25,1)");
+      fl.remove();
+    }
+  },
+  land(x, key, rec, count){
+    const b = this.binEl.get(key); if (!b) return;
+    const n = (this.binCount.get(key) || 0) + 1; this.binCount.set(key, n);
+    setNum(b.querySelector(".bin-n"), n);
+    const s = b.querySelector(".bin-s"); s.prepend(this.mini(x, key, true));
+    while (s.children.length > this.MAXCHIPS) s.lastElementChild.remove();
+    if (this.fx){ b.classList.add("hit"); setTimeout(() => b.classList.remove("hit"), 480 / this.speed); }
+    if (count){
+      const t = this.tally;
+      if (key === "__ex") t.excluded++;
+      else { t.judged++; t.sumFit += rec.fit; if (rec.fit >= this.thr()) t.matched++; }
+      this.kpi(); pulse($(key === "__ex" ? "#k-ex" : "#k-judged"));
+    }
+    this.pending = this.pending.filter(p => p.code !== x.code); this.renderInbox();
+  },
+  async sortOne(x, rec){
+    const key = this.keyOf(rec);
+    if (!this.fx){ this.land(x, key, rec, true); return; }
+    const card = await this.enter(x);
+    card.classList.add("scan");
+    this.readout(`<div class="g"><i id="gi"></i></div><span class="pct" id="gp">0%</span><span>判定中</span>`);
+    await this.gauge(rec.fit, 640);
+    card.classList.remove("scan");
+    const ok = key !== "__skip", h = ok ? this.hue(key) : 200;
+    this.readout(`<div class="g"><i style="width:${Math.round(rec.fit * 100)}%"></i></div><span class="pct">${Math.round(rec.fit * 100)}%</span>` +
+      `<span class="verdict ${ok ? "ok" : "no"}">${ok ? "一致" : "見送り"}</span>` +
+      (rec.cat ? `<span class="cat" style="--h:${h}">${esc(rec.cat)}</span>` : ""));
+    await this.wait(320);
+    await this.fly(card, key);
+    $("#slot").innerHTML = "";
+    this.land(x, key, rec, true);
+  },
+  gauge(to, ms){
+    return new Promise(res => {
+      const gi = $("#gi"), gp = $("#gp"); if (!gi || !gp){ res(); return; }
+      const t0 = performance.now(), d = ms / this.speed;
+      const step = now => {
+        if (this.abort){ res(); return; }
+        const p = Math.min(1, (now - t0) / d), e = 1 - Math.pow(1 - p, 2.4), v = to * e;
+        gi.style.width = (v * 100) + "%"; gp.textContent = Math.round(v * 100) + "%";
+        if (p < 1) requestAnimationFrame(step); else res();
+      };
+      requestAnimationFrame(step);
+    });
+  },
+  async excludeOne(x){ // デモ用：除外ワードに当たった商品が除外ビンへ落ちる
+    const card = await this.enter(x);
+    this.readout(`<span class="verdict ex">除外ワードに一致</span>`);
+    await this.wait(260);
+    await this.fly(card, "__ex", 420);
+    $("#slot").innerHTML = "";
+    this.land(x, "__ex", null, true);
+  },
+};
+
+/* ===== デモ（サンプル。実在の返礼品ではなく、Jevの判定でもない） ===== */
+const DEMO = [
+  { name: "ウール混トレッキングソックス 3足組", price: 12000, emoji: "🧦", cat: "ウェア・靴下", fit: .93 },
+  { name: "撥水ウォーキングシューズ", price: 30000, emoji: "🥾", cat: "シューズ・ケア用品", fit: .95 },
+  { name: "クラフトビール 24本セット", price: 20000, emoji: "🍺", ex: true },
+  { name: "20L 軽量デイパック", price: 22000, emoji: "🎒", cat: "バッグ・ザック", fit: .91 },
+  { name: "高級和牛 すき焼きセット", price: 30000, emoji: "🥩", cat: "その他の食品", fit: .12 },
+  { name: "エナジーバー 24本", price: 9000, emoji: "🍫", cat: "行動食・補給食", fit: .92 },
+  { name: "チタン製マグカップ", price: 12000, emoji: "☕", cat: "ギア・小物", fit: .84 },
+  { name: "速乾ランニングTシャツ", price: 9000, emoji: "👕", cat: "ウェア・靴下", fit: .81 },
+  { name: "スポーツドリンク粉末 大袋", price: 7000, emoji: "🥤", cat: "飲料", fit: .83 },
+  { name: "ペット用ふかふかベッド", price: 15000, emoji: "🐕", ex: true },
+  { name: "LEDヘッドライト", price: 15000, emoji: "🔦", cat: "ギア・小物", fit: .88 },
+  { name: "みかん 5kg", price: 10000, emoji: "🍊", cat: "その他の食品", fit: .22 },
+  { name: "登山靴用 防水ワックス", price: 8000, emoji: "🧴", cat: "シューズ・ケア用品", fit: .77 },
+  { name: "トレッキングポール 2本組", price: 20000, emoji: "🏔️", cat: "ギア・小物", fit: .9 },
+  { name: "防水サコッシュ", price: 10000, emoji: "👜", cat: "バッグ・ザック", fit: .72 },
+  { name: "塩分タブレット 大袋", price: 5000, emoji: "🧂", cat: "行動食・補給食", fit: .86 },
+  { name: "電気圧力鍋", price: 30000, emoji: "🍲", cat: "ギア・小物", fit: .09 },
+  { name: "レインウェア 上下セット", price: 28000, emoji: "🧥", cat: "ウェア・靴下", fit: .89 },
+  { name: "高反発マットレス", price: 40000, emoji: "🛏️", ex: true },
+  { name: "ドライフルーツ詰め合わせ", price: 8000, emoji: "🍑", cat: "行動食・補給食", fit: .79 },
+  { name: "折りたたみ水筒", price: 8000, emoji: "🍶", cat: "飲料", fit: .76 },
+  { name: "天然水 2L×12本", price: 10000, emoji: "💧", cat: "飲料", fit: .55 },
+  { name: "ジャム 5個セット", price: 9000, emoji: "🍓", cat: "その他の食品", fit: .31 },
+  { name: "UVカット ウォーキンググローブ", price: 6000, emoji: "🧤", cat: "ウェア・靴下", fit: .68 },
+  { name: "ウエストポーチ ヒップベルト付き", price: 11000, emoji: "👝", cat: "バッグ・ザック", fit: .74 },
+  { name: "冷凍ブルーベリー 1kg", price: 9000, emoji: "🫐", cat: "その他の食品", fit: .41 },
+  { name: "テーピングテープ セット", price: 6000, emoji: "🩹", cat: "ギア・小物", fit: .7 },
+  { name: "ご当地レトルトカレー 8食", price: 10000, emoji: "🍛", cat: "行動食・補給食", fit: .58 },
+];
+function leaveDemo(){
+  if (S.mode !== "demo") return;
+  S.mode = "live"; S.items = []; S.judge = new Map(); S.catFilter = null;
+  setBadge(); Stage.resetKpi(); Stage.sync(); renderAll();
+}
+function setBadge(){
+  const d = S.mode === "demo";
+  $("#modeBadge").textContent = d ? "DEMO" : "LIVE"; $("#modeBadge").classList.toggle("demo", d);
+  $("#modeNote").textContent = d ? "サンプルデータと疑似判定のデモです（実在の返礼品・Jevの判定ではありません）" : "楽天の返礼品を取得 → 条件で除外 → Jevが好みに合うか判定して分類";
+  $("#k-fetched-s").textContent = d ? "サンプル" : "楽天から取得";
+}
+async function runDemo(){
+  if (S.busy) return;
+  S.busy = true; S.mode = "demo"; S.catFilter = null; setBadge();
+  $("#btnDemo").textContent = "■ 停止"; $("#btnDemo").disabled = false;
+  const items = DEMO.map((d, i) => ({ code: "demo:" + i, name: d.name, catch: "", caption: "", price: d.price, url: "#", img: "", emoji: d.emoji, shop: "サンプル町",
+    rc: 20 + (i * 37) % 180, ra: 3.8 + ((i * 7) % 12) / 10, avail: 1, _ex: !!d.ex, _rec: d.ex ? null : { fit: d.fit, cat: d.cat, catP: 0.9 } }));
+  const ex = items.filter(x => x._ex), rest = items.filter(x => !x._ex);
+  S.items = []; S.judge = new Map(); $("#viewBox").hidden = true; status("");
+  Stage.running = true; Stage.abort = false; Stage.q = Promise.resolve();
+  Stage.setBins(DEMO_CATS); Stage.pending = []; Stage.renderInbox(); Stage.resetKpi();
+  Stage.startTimer("デモ実行中"); Stage.readout(`<span>取得中…</span>`, "wait"); $("#slot").innerHTML = "";
+  try{
+    // 1) 取得：件数が増え、待機レーンに商品が並ぶ
+    for (let i = 0; i < items.length; i += 4){
+      Stage.tally.fetched = Math.min(items.length, i + 4); Stage.tally.total = Math.min(rest.length, Math.round((i + 4) * rest.length / items.length));
+      Stage.pending = items.slice(0, Math.min(items.length, i + 4)); Stage.renderInbox(); Stage.kpi();
+      await Stage.wait(170);
+    }
+    Stage.tally.total = rest.length; Stage.kpi();
+    Stage.pending = items.slice(); Stage.renderInbox();
+    await Stage.wait(500);
+    // 2) 除外
+    for (const x of ex){ await Stage.excludeOne(x); await Stage.wait(120); }
+    // 3) Jev判定→分類（7件ずつ、応答待ちを挟む）
+    for (let i = 0; i < rest.length; i += 7){
+      Stage.waiting(true); Stage.readout(`<span>Jev の応答待ち<span class="dots"></span></span>`, "wait");
+      await Stage.wait(1100);
+      for (const x of rest.slice(i, i + 7)){ S.judge.set(x.code, x._rec); await Stage.sortOne(x, x._rec); await Stage.wait(60); }
+    }
+    S.items = rest; Stage.stopTimer("デモ完了");
+    $("#slot").innerHTML = `<div class="idle">完了。サンプル${items.length}件を分類しました</div>`; Stage.readout(`<span>完了</span>`);
+    Stage.running = false; renderAll();
+  }catch(e){
+    Stage.running = false; Stage.stopTimer("停止"); if (e && e.message !== "abort") status(String(e.message || e), true);
+    if (e && e.message === "abort"){ document.querySelectorAll(".fly").forEach(n => n.remove()); $("#slot").innerHTML = `<div class="idle">停止しました</div>`; }
+  }
+  S.busy = false; $("#btnDemo").textContent = "▶ デモ再生";
+  if (!Stage.abort && $("#demoLoop").checked){
+    await sleep(2600 / Stage.speed);
+    if ($("#demoLoop").checked && !S.busy && S.mode === "demo") runDemo();
+  }
+}
+
+/* ===== 一覧 ===== */
+function shown(){
+  const thr = Number($("#thr").value) / 100, showUn = $("#showUn").checked;
+  let arr = visibleBase().map(x => ({ x, j: S.judge.get(x.code) || null }));
+  arr = arr.filter(o => o.j ? o.j.fit >= thr : showUn);
+  if (S.catFilter) arr = arr.filter(o => o.j && o.j.cat === S.catFilter);
+  const by = $("#vsort").value;
+  arr.sort((a, b) => by === "price" ? (a.x.price ?? 1e12) - (b.x.price ?? 1e12)
+    : by === "rv" ? b.x.rc - a.x.rc
+    : (b.j ? b.j.fit : -1) - (a.j ? a.j.fit : -1));
+  return arr;
+}
+function renderAll(){
+  $("#thrV").textContent = $("#thr").value;
+  Stage.sync();
+  $("#viewBox").hidden = !S.items.length;
+  if (!S.items.length) return;
+  const base = visibleBase(), thr = Number($("#thr").value) / 100;
+  const counts = new Map();
+  for (const x of base){ const j = S.judge.get(x.code); if (j && j.fit >= thr && j.cat) counts.set(j.cat, (counts.get(j.cat) || 0) + 1); }
+  const order = curCats();
+  $("#catChips").innerHTML = `<button class="chip" data-cat="" aria-pressed="${S.catFilter ? "false" : "true"}">すべて</button>` +
+    order.filter(c => counts.has(c)).map(c => `<button class="chip" data-cat="${esc(c)}" aria-pressed="${S.catFilter === c}">${esc(c)} ${counts.get(c)}</button>`).join("");
+  const arr = shown();
+  const un = base.filter(x => !S.judge.has(x.code)).length;
+  $("#count").textContent = `${arr.length}件を表示（除外後 ${base.length}件／未判定 ${un}件／取得 ${S.items.length}件）` + (S.mode === "demo" ? "　※サンプル" : "");
+  $("#cards").innerHTML = arr.slice(0, 300).map(({ x, j }) => `
+    <article class="card">
+      ${x.img ? `<img class="im" src="${esc(x.img)}" alt="" loading="lazy">` : `<div class="im">${x.emoji ? esc(x.emoji) : ""}</div>`}
+      <div>
+        <h3>${x.url && x.url !== "#" ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}</a>` : esc(x.name)}</h3>
+        <div class="meta">${j && j.cat ? `<span class="ctag">${esc(j.cat)}</span>` : ""}
+          <span class="fit">${j ? "一致 " + Math.round(j.fit * 100) + "%" : "未判定"}</span>
+          <span>${yen(x.price)}</span><span>${esc(x.shop)}</span>
+          <span>★${x.ra ? x.ra.toFixed(2) : "-"}（${x.rc}件）</span>${x.avail ? "" : "<span>在庫なし</span>"}</div>
+        ${j ? `<div class="bar" aria-hidden="true"><i style="width:${Math.round(j.fit * 100)}%"></i></div>` : ""}
+      </div>
+    </article>`).join("") + (arr.length > 300 ? `<p class="note">表示は先頭300件までです。書き出しには全件入ります。</p>` : "");
+  $("#btnExport").disabled = $("#btnExportAll").disabled = S.mode === "demo";
+}
+
+/* ===== 書き出し（他のAIや別ツールで再利用しやすい形） ===== */
+function exportJson(all){
+  if (S.mode === "demo") return;
+  const arr = all ? visibleBase().map(x => ({ x, j: S.judge.get(x.code) || null })) : shown();
+  const out = {
+    schema: "furusato-jev/v1",
+    exported_at: new Date().toISOString(),
+    source: "Rakuten Ichiba Item Search API (ふるさと納税)",
+    fetch_conditions: readParams(),
+    local_exclusion: { words: words($("#exWords").value), min_review_average: Number($("#minRv").value) || 0 },
+    walker_profile: $("#profile").value.trim(),
+    categories: cats(),
+    fit_threshold: Number($("#thr").value) / 100,
+    judged_by: "TypeSafe Jev (fit = probability that the item matches walker_profile; category_probability = probability of the chosen category)",
+    items: arr.map(({ x, j }) => ({
+      item_code: x.code, name: x.name, price_yen: x.price, shop: x.shop, url: x.url, image_url: x.img,
+      review_count: x.rc, review_average: x.ra, in_stock: !!x.avail,
+      fit: j ? j.fit : null, category: j ? j.cat : null, category_probability: j ? j.catP : null,
+    })),
+  };
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: "application/json" }));
+  a.download = `furusato-jev-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+
+/* ===== 保存データ・操作 ===== */
+async function updateCacheNote(){
+  try{
+    const key = paramsKey(readParams()); let n = 0, newest = 0;
+    for (let i = 1; i <= 20; i++){ const r = await dbGet("pages", key + "#" + i); if (!r) break; n++; newest = Math.max(newest, r.fetchedAt); }
+    $("#cacheNote").textContent = (dbBroken ? "この環境では端末への保存が使えないため、このページを開いている間だけ保存します。" : "") +
+      (n ? `この条件の保存：${n}ページ（最終取得 ${new Date(newest).toLocaleString("ja-JP")}）` : "この条件の保存はまだありません。");
+  }catch(e){ $("#cacheNote").textContent = ""; }
+}
+async function guarded(fn){
+  if (S.busy) return; S.busy = true;
+  const ids = ["btnFetch", "btnRefetch", "btnClear", "btnJudge", "btnRejudge", "btnDemo"];
+  for (const id of ids) $("#" + id).disabled = true;
+  try{ await fn(); }catch(e){ status(e.message || String(e), true); }
+  finally{ S.busy = false; for (const id of ids) $("#" + id).disabled = false; }
+}
+function setRec(on){
+  document.body.classList.toggle("rec", on);
+  if (on){ try{ const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); if (p && p.catch) p.catch(() => {}); }catch(e){} }
+  else { try{ if (document.fullscreenElement) document.exitFullscreen(); }catch(e){} }
+}
+$("#btnSave").onclick = saveConn;
+$("#btnFetch").onclick = () => guarded(() => fetchAll(false));
+$("#btnRefetch").onclick = () => guarded(() => fetchAll(true));
+$("#btnJudge").onclick = () => guarded(() => runJudge(false));
+$("#btnRejudge").onclick = () => guarded(() => runJudge(true));
+$("#btnDemo").onclick = () => { if (S.busy && S.mode === "demo" && Stage.running){ Stage.abort = true; $("#demoLoop").checked = false; return; } runDemo(); };
+$("#btnClear").onclick = () => guarded(async () => {
+  if (!confirm("保存している取得結果と判定をすべて消しますか？")) return;
+  await Promise.all([dbClear("pages"), dbClear("items"), dbClear("judge")]);
+  S.items = []; S.judge = new Map(); S.mode = "live"; setBadge(); Stage.resetKpi(); renderAll(); updateCacheNote(); status("保存データを消しました");
+});
+$("#btnExport").onclick = () => exportJson(false);
+$("#btnExportAll").onclick = () => exportJson(true);
+$("#btnRec").onclick = () => setRec(true);
+$("#btnRecOff").onclick = () => setRec(false);
+document.addEventListener("keydown", e => { if (e.key === "Escape" && document.body.classList.contains("rec")) setRec(false); });
+document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && document.body.classList.contains("rec")) setRec(false); });
+$("#catChips").onclick = e => { const b = e.target.closest("[data-cat]"); if (!b) return; S.catFilter = b.dataset.cat || null; renderAll(); };
+for (const id of ["thr", "vsort", "showUn", "exWords", "minRv"]) $("#" + id).addEventListener("input", renderAll);
+$("#profile").addEventListener("change", async () => { LS.set("profile", $("#profile").value); await loadJudge(); renderAll(); });
+$("#cats").addEventListener("change", async () => { LS.set("cats", $("#cats").value); S.catFilter = null; await loadJudge(); renderAll(); });
+for (const id of ["kw", "ng", "minP", "maxP", "sort", "fAvail", "fReview", "fImage"]) $("#" + id).addEventListener("change", updateCacheNote);
+$("#speed").addEventListener("change", () => { Stage.speed = Number($("#speed").value) || 1; LS.set("speed", $("#speed").value); });
+$("#fx").addEventListener("change", () => { Stage.fx = $("#fx").checked; LS.set("fx", Stage.fx ? "1" : "0"); });
+
+/* ===== 起動 ===== */
+for (const k of ["appId", "accessKey", "code"]) $("#" + k).value = LS.get(k, "");
+$("#worker").value = LS.get("worker", "") || DEFAULT_WORKER;
+$("#profile").value = LS.get("profile", $("#profile").value);
+$("#cats").value = LS.get("cats", $("#cats").value);
+$("#speed").value = LS.get("speed", "1"); Stage.speed = Number($("#speed").value) || 1;
+{ // OSの「視差効果を減らす」設定なら、演出は初期でオフ（チェックを入れれば有効にできる）
+  let reduce = false; try{ reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; }catch(e){}
+  const saved = LS.get("fx", null);
+  Stage.fx = saved != null ? saved === "1" : !reduce; $("#fx").checked = Stage.fx;
+}
+if (!LS.get("code", "") ) $("#setup").open = true;
+Stage.setBins(curCats()); updateCacheNote(); setBadge();
+</script>
+</body>
+</html>
